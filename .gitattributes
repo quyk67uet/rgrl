@@ -1,0 +1,6 @@
+ai/models/** filter=lfs diff=lfs merge=lfs -text
+ai/results/** filter=lfs diff=lfs merge=lfs -text
+ai/rsl_rl/** filter=lfs diff=lfs merge=lfs -text
+ai/data/** filter=lfs diff=lfs merge=lfs -text
+ai/wrl/adp/data/** filter=lfs diff=lfs merge=lfs -text
+ai/wrl/T1/*.json filter=lfs diff=lfs merge=lfs -text

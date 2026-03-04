@@ -1,0 +1,8 @@
+{
+  "calculate_ews_score": "TriageAgent",
+  "assess_vitals": "EHRAgent",
+  "add_new_note": "EHRAgent",
+  "prepare_prescription": "DispensationAgent",
+  "check_drug_interaction": "ReconciliationAgent",
+  "get_medication_history": "ReconciliationAgent"
+}

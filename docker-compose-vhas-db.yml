@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: vhas_postgres
+    environment:
+      POSTGRES_USER: vhas
+      POSTGRES_PASSWORD: vhas2024
+      POSTGRES_DB: vhas_tracestore
+    ports:
+      - "5433:5432"
+    volumes:
+      - vhas_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  vhas_postgres_data:
+    driver: local
+
+# Usage:
+# Start database: docker compose -f docker-compose-vhas-db.yml up -d
+# Stop database: docker compose -f docker-compose-vhas-db.yml down
+# Reset database (delete all data): docker compose -f docker-compose-vhas-db.yml down -v
+
