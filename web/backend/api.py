@@ -31,8 +31,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import joinedload
 from collections import Counter
 
-from vhas.tracing.store import VHASTraceStore
-from vhas.tracing.models import WorkflowTrace, WorkflowSpan
+from web.backend.store import VHASTraceStore
+from web.backend.models import WorkflowTrace, WorkflowSpan
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -491,7 +491,7 @@ if __name__ == "__main__":
     print()
     
     uvicorn.run(
-        "api:app",
+        "web.backend.api:app",
         host="127.0.0.1",
         port=8001,
         reload=True,

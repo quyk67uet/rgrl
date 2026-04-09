@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session, joinedload
 from sqlalchemy.types import JSON
 
-from vhas.tracing.models import Base, WorkflowTrace, WorkflowSpan
+from web.backend.models import Base, WorkflowTrace, WorkflowSpan
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +249,7 @@ class SQLiteBackend(BaseStorageBackend):
         from sqlalchemy.dialects import sqlite
         if not hasattr(sqlite, 'JSONB'):
             # Monkey patch for SQLite to use JSON instead of JSONB
-            import vhas.tracing.models as models_module
+            import web.backend.models as models_module
             original_jsonb = models_module.JSONB
             models_module.JSONB = JSON
         

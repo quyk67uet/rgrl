@@ -7,10 +7,9 @@ VHAS OTLP Trace Schema.
 
 Usage:
     1. Start PostgreSQL: docker compose -f docker-compose-vhas-db.yml up -d
-    2. Run this script: python vhas/examples/seed_tracestore.py
+    2. Run this script: python web/backend/seed_tracestore.py
 """
 
-import os
 import json
 import logging
 from pathlib import Path
@@ -20,7 +19,7 @@ from typing import List, Dict, Any
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from vhas.tracing import VHASTraceStore
+from web.backend.store import VHASTraceStore
 
 # Configure logging
 logging.basicConfig(
@@ -88,16 +87,22 @@ def seed_tracestore(backend: str = "postgres", db_url: str = None):
     # Determine the path to trace files
     project_root = Path(__file__).parent.parent.parent
     
-    # Load traces from all batches
+    # Load traces from train/validation/test split files.
     all_traces = []
-    for batch_num in range(1, 9):  # 8 batches
-        batch_dir = project_root / "vhas" / f"batch_{batch_num}"
-        if batch_dir.exists():
-            print(f"📂 Loading traces from: {batch_dir}")
-            batch_traces = load_trace_files(str(batch_dir))
-            all_traces.extend(batch_traces)
-            print(f"   Loaded {len(batch_traces)} traces from batch {batch_num}")
-            print()
+    split_paths = [
+        project_root / "ai" / "data" / "workflow_traces" / "train_traces.json",
+        project_root / "ai" / "data" / "workflow_traces" / "val_traces.json",
+        project_root / "ai" / "data" / "workflow_traces" / "test_traces.json",
+    ]
+    for split_path in split_paths:
+        if split_path.exists():
+            print(f"📂 Loading traces from: {split_path}")
+            with split_path.open("r", encoding="utf-8") as handle:
+                trace_array = json.load(handle)
+            if isinstance(trace_array, list):
+                all_traces.extend(trace_array)
+                print(f"   Loaded {len(trace_array)} traces from {split_path.name}")
+                print()
     
     if not all_traces:
         logger.error("No traces loaded. Exiting.")
@@ -166,8 +171,8 @@ def seed_tracestore(backend: str = "postgres", db_url: str = None):
     print("=" * 70)
     print()
     print("Next steps:")
-    print("  1. Start the API server: cd vhas/tracing && python api.py")
-    print("  2. Start the Streamlit UI: streamlit run vhas/examples/app.py")
+    print("  1. Start the API server: python web/backend/api.py")
+    print("  2. Open API docs: http://localhost:8001/docs")
 
 
 if __name__ == "__main__":

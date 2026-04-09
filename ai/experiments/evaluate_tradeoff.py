@@ -5,7 +5,6 @@ calling the production router. It reports:
 - System 2 invocation rate
 - Compliance rate against ground-truth pathway labels
 
-No mocked probabilities or random sampling are used in this experiment loop.
 """
 
 from __future__ import annotations
