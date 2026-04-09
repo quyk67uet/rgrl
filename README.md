@@ -1,4 +1,4 @@
-# Representation-Guided Reinforcement Learning for Guideline-Compliant Multi-Agent Orchestration under Semantic Variability
+# Representation-Guided Reinforcement Learning for Guideline-Compliant Multi-Agent Orchestration
 
 This repository contains the official implementation of the **VHAS (Vietnam Health-Agent System)**, a testbed designed to evaluate the **Representation-Guided Reinforcement Learning (RGRL)** framework. 
 
