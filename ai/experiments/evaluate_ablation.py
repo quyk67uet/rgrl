@@ -96,11 +96,11 @@ async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[
     """Run one mode on one trace and return normalized execution payload."""
     input_scenario = trace.get("input_scenario")
     if isinstance(input_scenario, dict) and "nl_command" in input_scenario:
-        context = str(input_scenario.get("nl_command", ""))
+        input_context = str(input_scenario.get("nl_command", ""))
     elif "patient_context" in trace:
-        context = str(trace.get("patient_context", ""))
+        input_context = str(trace.get("patient_context", ""))
     else:
-        context = str(trace.get("context", ""))
+        input_context = str(trace.get("context", ""))
 
     history = trace.get("spans", [])
     if not isinstance(history, list):
@@ -115,7 +115,7 @@ async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[
         try:
             if mode == "gnn_only":
                 router_result = await orchestrate_workflow_step(
-                    patient_context=context,
+                    patient_context=input_context,
                     graph_history=history,
                     tau_threshold=0.0,
                 )
@@ -127,7 +127,7 @@ async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[
 
             if mode == "single_llm":
                 llm_result = await run_deliberative_pipeline(
-                    patient_context=context,
+                    patient_context=input_context,
                     max_retries=0,
                 )
                 return {
@@ -137,7 +137,7 @@ async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[
                 }
 
             llm_result = await run_deliberative_pipeline(
-                patient_context=context,
+                patient_context=input_context,
                 max_retries=3,
             )
             return {
@@ -190,7 +190,10 @@ async def run_ablation_experiment(
     semaphore = asyncio.Semaphore(5)
 
     async def _run_with_semaphore(index: int, trace: dict[str, Any]) -> dict[str, Any]:
-        print(f"[ablation:{mode}] Evaluating Trace {index}/{total}...", flush=True)
+        print(
+            f"[ablation:{mode}] Evaluating workflow context {index}/{total}...",
+            flush=True,
+        )
         async with semaphore:
             return await _run_mode_on_trace(mode=mode, trace=trace)
 
@@ -282,7 +285,7 @@ def main() -> None:
     """CLI entrypoint for real ablation experiment on the test split."""
     test_traces = load_test_traces()
     print(
-        "[ablation] Loaded test split with {count} traces (thesis target: {target}).".format(
+        "[ablation] Loaded workflow context split with {count} traces (target: {target}).".format(
             count=len(test_traces),
             target=EXPECTED_TEST_SIZE,
         ),
@@ -292,6 +295,7 @@ def main() -> None:
     rows = asyncio.run(run_all_modes(test_traces))
     save_ablation_results(rows, OUTPUT_CSV_PATH)
 
+    print("guideline compliance metrics")
     print("mode,n_cases,compliance_rate,hallucination_rate,redundancy_rate,average_steps")
     for row in rows:
         print(
