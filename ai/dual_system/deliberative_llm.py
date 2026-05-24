@@ -78,7 +78,7 @@ def _build_generator_prompt(
     previous_feedback: str | None,
 ) -> str:
     """Construct the user prompt for the Generator agent."""
-    blocks = [f"Patient context:\n{patient_context}"]
+    blocks = [f"Task context:\n{patient_context}"]
 
     if previous_candidate is not None:
         blocks.append(
@@ -98,7 +98,7 @@ async def _generate_candidate(
     previous_candidate: dict[str, Any] | None,
     previous_feedback: str | None,
 ) -> dict[str, Any]:
-    """Generate a candidate workflow from patient context and prior signals."""
+    """Generate a candidate workflow from task context and prior signals."""
     return await _json_chat_completion(
         client=client,
         model=_GENERATOR_REVISER_MODEL,
@@ -116,10 +116,10 @@ async def _verify_candidate(
     patient_context: str,
     candidate_solution: dict[str, Any],
 ) -> VerificationResult:
-    """Verify compliance of a candidate workflow against clinical constraints."""
+    """Verify compliance of a candidate workflow against operational guidelines."""
     verifier_input = "\n\n".join(
         [
-            f"Patient context:\n{patient_context}",
+            f"Task context:\n{patient_context}",
             "Candidate solution JSON:",
             json.dumps(candidate_solution, indent=2, sort_keys=True),
         ]
@@ -148,7 +148,7 @@ async def _revise_candidate(
     """Revise a flawed candidate using verifier feedback."""
     reviser_input = "\n\n".join(
         [
-            f"Patient context:\n{patient_context}",
+            f"Task context:\n{patient_context}",
             "Flawed candidate solution JSON:",
             json.dumps(candidate_solution, indent=2, sort_keys=True),
             f"Verifier feedback:\n{verifier_feedback}",
@@ -195,7 +195,7 @@ async def run_deliberative_pipeline(patient_context: str, max_retries: int = 3) 
     3. If flawed, Reviser attempts to correct the candidate.
 
     Args:
-        patient_context: Clinical context string for the current episode/step.
+        patient_context: Task context string for the current episode/step.
         max_retries: Maximum number of Generator-Verifier iterations.
             If set to 0, runs Generator-only mode (no Verifier/Reviser).
 
@@ -206,7 +206,7 @@ async def run_deliberative_pipeline(patient_context: str, max_retries: int = 3) 
         ValueError: If inputs are invalid.
     """
     if not patient_context or not patient_context.strip():
-        raise ValueError("patient_context must be a non-empty string.")
+        raise ValueError("context input must be a non-empty string.")
     if max_retries < 0:
         raise ValueError("max_retries must be >= 0.")
 
