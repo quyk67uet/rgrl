@@ -73,8 +73,19 @@ def _extract_agent_sequence_from_action(action: Any) -> list[str]:
 
 async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[str, Any]:
     """Run one mode on one trace and return normalized execution payload."""
-    context = str(trace["patient_context"])
-    history = trace.get("graph_history", [])
+    input_scenario = trace.get("input_scenario")
+    if isinstance(input_scenario, dict) and "nl_command" in input_scenario:
+        context = str(input_scenario.get("nl_command", ""))
+    elif "patient_context" in trace:
+        context = str(trace.get("patient_context", ""))
+    else:
+        context = str(trace.get("context", ""))
+
+    history = trace.get("spans", [])
+    if not isinstance(history, list):
+        history = trace.get("graph_history", [])
+    if not isinstance(history, list):
+        history = []
 
     if mode == "gnn_only":
         router_result = await orchestrate_workflow_step(
