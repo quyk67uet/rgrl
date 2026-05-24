@@ -35,10 +35,12 @@ embedding_space_model_a_dual/
 
 import json
 import os
-import numpy as np
-from sentence_transformers import SentenceTransformer
-import torch
+from pathlib import Path
+
 import modal
+import numpy as np
+import torch
+from sentence_transformers import SentenceTransformer
 
 # Định nghĩa Modal App và Image
 app = modal.App("vhas-build-dual-embedding-space")
@@ -56,6 +58,16 @@ image = (
 # Kết nối các Modal Volumes
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
+
+# Main entrypoint path configuration
+UNIVERSE_FILE = Path("/definitions/definitions/vhas_universe.json")
+STATES_FILE = Path("/definitions/definitions/clinical_states.json")
+MODEL_A_STATE_PATH = Path("/data/model_a_state_encoder")
+MODEL_A_ACTION_PATH = Path("/data/model_a_action_encoder")
+MODEL_B_STATE_PATH = Path("/data/model_b_state_encoder")
+MODEL_B_ACTION_PATH = Path("/data/model_b_action_encoder")
+OUTPUT_A_DIR = Path("/data/embedding_space_model_a_dual")
+OUTPUT_B_DIR = Path("/data/embedding_space_model_b_dual")
 
 @app.function(
     image=image,
@@ -220,23 +232,6 @@ def main():
     """
     Local entrypoint - chạy từ máy local để trigger các Modal functions
     """
-    # Các file định nghĩa (Semantic State Space + universe, mounted từ training_data_vol)
-    UNIVERSE_FILE = '/definitions/definitions/vhas_universe.json'
-    STATES_FILE = '/definitions/definitions/clinical_states.json'
-    
-    # Các đường dẫn đến 2 models đã được fine-tune (mounted từ finetuned_output_vol tại /data)
-    # Model A: Base → Fine-tune
-    MODEL_A_STATE_PATH = '/data/model_a_state_encoder'
-    MODEL_A_ACTION_PATH = '/data/model_a_action_encoder'
-    
-    # Model B: Base → Pre-train → Fine-tune
-    MODEL_B_STATE_PATH = '/data/model_b_state_encoder'
-    MODEL_B_ACTION_PATH = '/data/model_b_action_encoder'
-    
-    # Các thư mục output tương ứng
-    OUTPUT_A_DIR = '/data/embedding_space_model_a_dual'
-    OUTPUT_B_DIR = '/data/embedding_space_model_b_dual'
-    
     print("\n" + "="*70)
     print("GIAI ĐOẠN 1D: XÂY DỰNG DUAL EMBEDDING SPACE")
     print("="*70)
@@ -264,11 +259,17 @@ def main():
         text=True
     )
     
-    if "vhas_universe.json" not in result.stdout or "clinical_states.json" not in result.stdout:
+    if UNIVERSE_FILE.name not in result.stdout or STATES_FILE.name not in result.stdout:
         print("\n❌ ERROR: Definition files not found in volume!")
         print("\nBạn cần upload các file định nghĩa (Semantic State Space) trước:")
-        print("  $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json /definitions/vhas_universe.json")
-        print("  $ modal volume put vhas-training-data data/clinical_states/clinical_states.json /definitions/clinical_states.json")
+        print(
+            "  $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json "
+            f"{UNIVERSE_FILE.as_posix()}"
+        )
+        print(
+            "  $ modal volume put vhas-training-data data/clinical_states/clinical_states.json "
+            f"{STATES_FILE.as_posix()}"
+        )
         sys.exit(1)
     
     print("✓ Semantic State Space definition files found in volume\n")
@@ -276,21 +277,21 @@ def main():
     # Chạy cho Model A
     print("\n🚀 Building dual embedding space for Model A (Base → Fine-tune)...")
     build_dual_space_for_model.remote(
-        state_encoder_path=MODEL_A_STATE_PATH,
-        action_encoder_path=MODEL_A_ACTION_PATH,
-        universe_file=UNIVERSE_FILE,
-        states_file=STATES_FILE,
-        output_dir=OUTPUT_A_DIR
+        state_encoder_path=MODEL_A_STATE_PATH.as_posix(),
+        action_encoder_path=MODEL_A_ACTION_PATH.as_posix(),
+        universe_file=UNIVERSE_FILE.as_posix(),
+        states_file=STATES_FILE.as_posix(),
+        output_dir=OUTPUT_A_DIR.as_posix()
     )
     
     # Chạy cho Model B
     print("\n🚀 Building dual embedding space for Model B (Base → Pre-train → Fine-tune)...")
     build_dual_space_for_model.remote(
-        state_encoder_path=MODEL_B_STATE_PATH,
-        action_encoder_path=MODEL_B_ACTION_PATH,
-        universe_file=UNIVERSE_FILE,
-        states_file=STATES_FILE,
-        output_dir=OUTPUT_B_DIR
+        state_encoder_path=MODEL_B_STATE_PATH.as_posix(),
+        action_encoder_path=MODEL_B_ACTION_PATH.as_posix(),
+        universe_file=UNIVERSE_FILE.as_posix(),
+        states_file=STATES_FILE.as_posix(),
+        output_dir=OUTPUT_B_DIR.as_posix()
     )
 
     print("\n" + "="*70)
