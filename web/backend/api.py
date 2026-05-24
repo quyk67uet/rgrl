@@ -25,7 +25,7 @@ sys.path.insert(0, str(project_root))
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 import uvicorn
 from sqlalchemy import func
 from sqlalchemy.orm import joinedload
@@ -71,9 +71,9 @@ class SpanOut(BaseModel):
     name: str = Field(..., description="Human-readable operation name")
     attributes: Dict[str, Any] = Field(default_factory=dict, description="Custom VHAS attributes")
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "span_id": "1b356d696b974817",
                 "parent_span_id": None,
@@ -82,10 +82,11 @@ class SpanOut(BaseModel):
                     "vhas.span.type": "orchestrator_decision",
                     "vhas.orchestrator.input_state": "Initial state: New workflow request received.",
                     "vhas.orchestrator.thought": "The request requires immediate routing.",
-                    "vhas.orchestrator.action_selected": "TriageAgent"
-                }
+                    "vhas.orchestrator.action_selected": "TriageAgent",
+                },
             }
-        }
+        },
+    )
 
 
 class TraceOut(BaseModel):
@@ -98,18 +99,19 @@ class TraceOut(BaseModel):
     feedback: Optional[Dict[str, Any]] = Field(None, description="Expert feedback on workflow quality")
     spans: List[SpanOut] = Field(default_factory=list, description="List of spans in this trace")
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "id": "116ebb84cbaad37dfc1061311b4b331f",
                 "task_id": "WORKFLOW_SCENARIO_00001",
                 "nl_command": "Process priority workflow request for access review",
                 "created_at": "2025-12-19T15:30:00Z",
                 "feedback": {"rating": 5, "comment": "Excellent workflow!"},
-                "spans": []
+                "spans": [],
             }
-        }
+        },
+    )
 
 
 class TraceListOut(BaseModel):
@@ -136,17 +138,19 @@ class FeedbackIn(BaseModel):
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing feedback")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
             "example": {
                 "rating": 5,
                 "workflow_efficiency": 5,
                 "decision_accuracy": 4,
                 "comment": "Excellent orchestration! Proper routing and task assessment.",
                 "tags": ["high-quality", "efficient-workflow"],
-                "metadata": {"expert_id": "EX001", "session_id": "abc"}
+                "metadata": {"expert_id": "EX001", "session_id": "abc"},
             }
-        }
+        },
+    )
 
 
 class FeedbackResponse(BaseModel):
