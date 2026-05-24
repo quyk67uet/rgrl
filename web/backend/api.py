@@ -2,13 +2,13 @@
 VHAS TraceStore REST API
 
 This module provides a FastAPI-based REST API for interacting with the VHAS TraceStore.
-It exposes endpoints for querying clinical workflow traces, retrieving trace details,
-and adding clinician feedback.
+It exposes endpoints for querying guideline-compliant multi-agent workflow traces,
+retrieving trace details, and adding expert feedback.
 
 Features:
 - GET /traces: List all workflow traces with pagination
 - GET /traces/{trace_id}: Get detailed trace information
-- POST /traces/{trace_id}/feedback: Add clinician feedback to a trace
+- POST /traces/{trace_id}/feedback: Add expert feedback to a trace
 - Automatic API documentation at /docs
 - Type-safe request/response models using Pydantic
 """
@@ -37,7 +37,7 @@ from web.backend.models import WorkflowTrace, WorkflowSpan
 # Initialize FastAPI app
 app = FastAPI(
     title="VHAS TraceStore API",
-    description="REST API for managing and querying clinical ED workflow traces",
+    description="REST API for managing and querying guideline-compliant multi-agent workflow traces",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
@@ -80,8 +80,8 @@ class SpanOut(BaseModel):
                 "name": "Orchestrator Decision: Start Triage",
                 "attributes": {
                     "vhas.span.type": "orchestrator_decision",
-                    "vhas.orchestrator.input_state": "Initial state: New patient command received.",
-                    "vhas.orchestrator.thought": "The patient requires immediate assessment.",
+                    "vhas.orchestrator.input_state": "Initial state: New workflow request received.",
+                    "vhas.orchestrator.thought": "The request requires immediate routing.",
                     "vhas.orchestrator.action_selected": "TriageAgent"
                 }
             }
@@ -92,10 +92,10 @@ class TraceOut(BaseModel):
     """Response model for a workflow trace."""
     
     id: str = Field(..., description="Unique trace identifier")
-    task_id: Optional[str] = Field(None, description="Clinical scenario task ID")
-    nl_command: Optional[str] = Field(None, description="Natural language command from clinician")
+    task_id: Optional[str] = Field(None, description="Scenario task ID")
+    nl_command: Optional[str] = Field(None, description="Natural language command from operator")
     created_at: datetime = Field(..., description="Timestamp when trace was created")
-    feedback: Optional[Dict[str, Any]] = Field(None, description="Clinician feedback on workflow quality")
+    feedback: Optional[Dict[str, Any]] = Field(None, description="Expert feedback on workflow quality")
     spans: List[SpanOut] = Field(default_factory=list, description="List of spans in this trace")
     
     class Config:
@@ -103,8 +103,8 @@ class TraceOut(BaseModel):
         json_schema_extra = {
             "example": {
                 "id": "116ebb84cbaad37dfc1061311b4b331f",
-                "task_id": "MIMIC_ED_SCENARIO_00001",
-                "nl_command": "Process emergency admission for patient with chest pain",
+                "task_id": "WORKFLOW_SCENARIO_00001",
+                "nl_command": "Process priority workflow request for access review",
                 "created_at": "2025-12-19T15:30:00Z",
                 "feedback": {"rating": 5, "comment": "Excellent workflow!"},
                 "spans": []
@@ -126,7 +126,12 @@ class FeedbackIn(BaseModel):
     
     rating: Optional[int] = Field(None, ge=1, le=5, description="Rating from 1-5")
     workflow_efficiency: Optional[int] = Field(None, ge=1, le=5, description="Workflow efficiency score (1-5)")
-    clinical_accuracy: Optional[int] = Field(None, ge=1, le=5, description="Clinical accuracy score (1-5)")
+    decision_accuracy: Optional[int] = Field(
+        None,
+        ge=1,
+        le=5,
+        description="Decision accuracy score (1-5) of the orchestrator.",
+    )
     comment: Optional[str] = Field(None, description="Text comment or feedback")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing feedback")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
@@ -136,10 +141,10 @@ class FeedbackIn(BaseModel):
             "example": {
                 "rating": 5,
                 "workflow_efficiency": 5,
-                "clinical_accuracy": 4,
-                "comment": "Excellent orchestration! Proper triage and vitals assessment.",
+                "decision_accuracy": 4,
+                "comment": "Excellent orchestration! Proper routing and task assessment.",
                 "tags": ["high-quality", "efficient-workflow"],
-                "metadata": {"clinician_id": "DR001", "session_id": "abc"}
+                "metadata": {"expert_id": "EX001", "session_id": "abc"}
             }
         }
 
@@ -162,7 +167,7 @@ async def root():
     return {
         "name": "VHAS TraceStore API",
         "version": "1.0.0",
-        "description": "REST API for managing clinical ED workflow traces",
+        "description": "REST API for managing guideline-compliant multi-agent workflow traces",
         "docs": "/docs",
         "endpoints": {
             "list_traces": "GET /traces",
@@ -284,7 +289,7 @@ async def get_trace(trace_id: str):
 @app.post("/traces/{trace_id}/feedback", response_model=FeedbackResponse, tags=["Feedback"])
 async def add_feedback(trace_id: str, feedback: FeedbackIn):
     """
-    Add or update clinician feedback for a specific workflow trace.
+    Add or update expert feedback for a specific workflow trace.
     
     Args:
         trace_id: The unique identifier of the trace.
@@ -423,7 +428,7 @@ async def get_agent_usage():
 @app.get("/analytics/pathway_distribution", tags=["Analytics"])
 async def get_pathway_distribution():
     """
-    Get distribution of clinical pathways used in traces.
+    Get distribution of workflow pathways used in traces.
     
     Returns:
         Statistics about which pathways are most common.
