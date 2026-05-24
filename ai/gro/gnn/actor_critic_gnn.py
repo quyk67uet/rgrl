@@ -194,6 +194,11 @@ class ActorCriticGNN(nn.Module):
 
         # --- GLOBAL POOLING (OPTIMIZED: Pre-allocate tensor) ---
         batch_size = obs.shape[0]
+        if not x_dict or not any(
+            pyg_batch[node_type].num_nodes > 0 for node_type in x_dict
+        ):
+            return self.empty_graph_embedding.to(obs.device).expand(batch_size, -1)
+
         # Pre-allocate output tensor for better performance
         pooled_embeds = torch.zeros(
             (batch_size, 3 * self.gnn_hidden_dim), 
