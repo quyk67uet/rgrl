@@ -34,7 +34,7 @@ class ClinicalWorkflowEnv(gym.Env):
 
     def __init__(self, 
                  encoder_model, 
-                 scenarios_data_dir: str, 
+                 traces_filepath: str, 
                  kb_path: str = "data/simulation_kb.json",
                  guidance_encoder_path: str = None,
                  guidance_embedding_space_path: str = None,
@@ -82,8 +82,8 @@ class ClinicalWorkflowEnv(gym.Env):
         else:
             print(f"   ℹ️  Guidance Mechanism disabled (use_guidance={use_guidance})")
         
-        # 3. Tải expert traces từ batch folders
-        self.all_traces_data = self._load_expert_traces(scenarios_data_dir)
+        # 3. Tải expert traces từ unified JSON file
+        self.all_traces_data = self._load_expert_traces(traces_filepath)
         
         # 4. Định nghĩa Không gian Hành động (Action Space)
         # Trích xuất agent names từ traces thay vì từ AGENT_REGISTRY_SIM
@@ -104,28 +104,21 @@ class ClinicalWorkflowEnv(gym.Env):
         
         print(f"--- ClinicalWorkflowEnv Initialized Successfully with {len(self.all_traces_data)} traces. ---")
 
-    def _load_expert_traces(self, scenarios_data_dir: str) -> list:
-        """Tải và parse tất cả traces từ batch folders."""
-        all_traces = []
-        print(f"Loading expert traces from {scenarios_data_dir}...")
-        
-        if not os.path.isdir(scenarios_data_dir):
-            raise FileNotFoundError(f"Directory not found at: {scenarios_data_dir}")
+    def _load_expert_traces(self, traces_filepath: str) -> list:
+        """Tải và parse expert traces từ một unified JSON file."""
+        print(f"Loading expert traces from {traces_filepath}...")
 
-        # Tìm các batch folders
-        batch_folders = sorted([f for f in os.listdir(scenarios_data_dir) 
-                               if f.startswith('batch_') and os.path.isdir(os.path.join(scenarios_data_dir, f))])
-        
-        for batch_folder in batch_folders:
-            batch_num = batch_folder.split('_')[1]
-            trace_file = os.path.join(scenarios_data_dir, batch_folder, f'traces_{batch_num}.json')
-            if os.path.exists(trace_file):
-                with open(trace_file, 'r', encoding='utf-8') as f:
-                    traces = json.load(f)
-                    all_traces.extend(traces)
-        
-        print(f"Loaded {len(all_traces)} traces from {len(batch_folders)} batches.")
-        return all_traces
+        if not os.path.isfile(traces_filepath):
+            raise FileNotFoundError(f"Trace file not found at: {traces_filepath}")
+
+        with open(traces_filepath, 'r', encoding='utf-8') as f:
+            traces = json.load(f)
+
+        if not isinstance(traces, list):
+            raise ValueError("Trace file must contain a JSON list of traces.")
+
+        print(f"Loaded {len(traces)} traces from unified file.")
+        return traces
 
     def _get_obs(self, clinical_state_text: str) -> np.ndarray:
         """Biến một chuỗi trạng thái thành một vector observation."""
