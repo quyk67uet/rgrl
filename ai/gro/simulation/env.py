@@ -6,6 +6,7 @@ import numpy as np
 import json
 import os
 import random
+from typing import Any
 
 # Import GuidanceMechanism (optional)
 try:
@@ -124,7 +125,11 @@ class ClinicalWorkflowEnv(gym.Env):
         """Biến một chuỗi trạng thái thành một vector observation."""
         return self.encoder.encode(clinical_state_text)
 
-    def get_candidate_actions(self, current_state_text: str = None, top_k: int = 5) -> dict:
+    def get_candidate_actions(
+        self,
+        current_state_text: str | None = None,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
         """
         Lấy danh sách candidate actions cho state hiện tại sử dụng Guidance Mechanism.
         
@@ -179,7 +184,11 @@ class ClinicalWorkflowEnv(gym.Env):
 
 
 
-    def reset(self, seed=None, options=None):
+    def reset(
+        self,
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         """Bắt đầu một episode mới."""
         super().reset(seed=seed)
         
@@ -210,7 +219,7 @@ class ClinicalWorkflowEnv(gym.Env):
         
         return observation, info
 
-    def step(self, action: int):
+    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Thực thi một hành động bằng cách TRA CỨU state transition trong KB."""
         
         agent_name_to_call = self.action_to_name[action]
