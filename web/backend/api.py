@@ -346,29 +346,28 @@ async def get_stats():
         Dictionary with key metrics including total traces, spans, etc.
     """
     try:
-        session = store.get_session()
-        try:
+        with store.get_session() as session:
             # Count total traces
             total_traces = session.query(WorkflowTrace).count()
-            
+
             # Count total spans
             total_spans = session.query(WorkflowSpan).count()
-            
+
             # Count traces with feedback
             traces_with_feedback = session.query(WorkflowTrace).filter(
                 WorkflowTrace.feedback.isnot(None)
             ).count()
-            
+
             # Count traces from last 24 hours
             from datetime import timedelta
             yesterday = datetime.utcnow() - timedelta(days=1)
             traces_last_24h = session.query(WorkflowTrace).filter(
                 WorkflowTrace.created_at >= yesterday
             ).count()
-            
+
             # Average spans per trace
             avg_spans = total_spans / total_traces if total_traces > 0 else 0
-            
+
             return {
                 "total_traces": total_traces,
                 "total_spans": total_spans,
@@ -376,8 +375,6 @@ async def get_stats():
                 "traces_last_24h": traces_last_24h,
                 "avg_spans_per_trace": round(avg_spans, 2)
             }
-        finally:
-            session.close()
             
     except Exception as e:
         raise HTTPException(
@@ -395,32 +392,29 @@ async def get_agent_usage():
         List of agent names with their usage counts.
     """
     try:
-        session = store.get_session()
-        try:
+        with store.get_session() as session:
             # Get all spans with agent execution type
             spans = session.query(WorkflowSpan).filter(
                 WorkflowSpan.attributes["vhas.span.type"].astext == "agent_execution"
             ).all()
-            
+
             # Count agent usage
             agent_counts = Counter()
             for span in spans:
                 agent_name = span.attributes.get("vhas.agent.name")
                 if agent_name:
                     agent_counts[agent_name] += 1
-            
+
             # Convert to list of dicts for easy charting
             agent_usage = [
                 {"agent": agent, "count": count}
                 for agent, count in agent_counts.most_common(10)
             ]
-            
+
             return {
                 "agents": agent_usage,
                 "total_agent_calls": sum(agent_counts.values())
             }
-        finally:
-            session.close()
             
     except Exception as e:
         raise HTTPException(
@@ -438,20 +432,19 @@ async def get_pathway_distribution():
         Statistics about which pathways are most common.
     """
     try:
-        session = store.get_session()
-        try:
+        with store.get_session() as session:
             # Get all traces with their spans
             traces = session.query(WorkflowTrace).options(
                 joinedload(WorkflowTrace.spans)
             ).all()
-            
+
             pathway_counts = {
                 "Monitor & Release": 0,
                 "Quick Intervention": 0,
                 "Complex Care Loop": 0,
                 "Unknown": 0
             }
-            
+
             for trace in traces:
                 # Analyze agent sequence to determine pathway
                 agent_sequence = []
@@ -460,7 +453,7 @@ async def get_pathway_distribution():
                         agent_name = span.attributes.get("vhas.agent.name")
                         if agent_name:
                             agent_sequence.append(agent_name)
-                
+
                 # Classify pathway
                 if agent_sequence == ["TriageAgent", "EHRAgent", "SummaryAgent"]:
                     pathway_counts["Monitor & Release"] += 1
@@ -470,7 +463,7 @@ async def get_pathway_distribution():
                     pathway_counts["Complex Care Loop"] += 1
                 else:
                     pathway_counts["Unknown"] += 1
-            
+
             return {
                 "pathways": [
                     {"pathway": name, "count": count}
@@ -478,8 +471,6 @@ async def get_pathway_distribution():
                 ],
                 "total_traces": sum(pathway_counts.values())
             }
-        finally:
-            session.close()
             
     except Exception as e:
         raise HTTPException(
