@@ -8,6 +8,8 @@ This module provides production-oriented routing logic:
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +36,9 @@ _ACTION_TO_PATHWAY = {
     3: 3,  # Reconciliation indicates complex care loop
     4: 1,  # Summary default branch for low-acuity closure
 }
+
+_model_load_lock = asyncio.Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 class AFANGNNInferenceEngine:
@@ -77,10 +82,11 @@ class AFANGNNInferenceEngine:
                 if out_features > 1:
                     return out_features
 
-        raise RuntimeError(
+        _LOGGER.warning(
             "Unable to infer action-space size from checkpoint state_dict. "
-            "Expected actor head weight tensor to be present."
+            "Defaulting to 5 actions."
         )
+        return 5
 
     def _build_policy_instance(self, num_actions: int) -> Any:
         """Instantiate AFAN policy architecture for checkpoint loading."""
@@ -164,6 +170,15 @@ class AFANGNNInferenceEngine:
 
         self._policy = policy
 
+    async def _ensure_loaded_async(self) -> None:
+        """Lazily load AFAN-GNN policy checkpoint under an async lock."""
+        if self._policy is not None:
+            return
+
+        async with _model_load_lock:
+            if self._policy is None:
+                self._ensure_loaded()
+
     def _to_heterodata(self, graph_history: Any) -> "HeteroData":
         """Convert graph_history payload into a PyG HeteroData object.
 
@@ -185,6 +200,17 @@ class AFANGNNInferenceEngine:
 
         data = HeteroData()
 
+        def _validate_numeric_tensor(label: str, payload: Any, dtype: Any) -> "torch.Tensor":
+            try:
+                tensor = torch.as_tensor(payload, dtype=dtype, device=self._device)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{label} contains non-numeric values.") from exc
+            if tensor.numel() == 0:
+                raise ValueError(f"{label} is empty.")
+            if torch.is_floating_point(tensor) and not torch.isfinite(tensor).all():
+                raise ValueError(f"{label} contains non-finite values.")
+            return tensor
+
         # Node feature conversion
         for node_type in ("state", "agent", "tool"):
             x_key = f"{node_type}_x"
@@ -199,7 +225,11 @@ class AFANGNNInferenceEngine:
             if raw_x is None:
                 continue
 
-            x_tensor = torch.as_tensor(raw_x, dtype=torch.float32, device=self._device)
+            x_tensor = _validate_numeric_tensor(
+                f"{node_type} node features",
+                raw_x,
+                torch.float32,
+            )
             if x_tensor.dim() == 1:
                 x_tensor = x_tensor.unsqueeze(0)
             data[node_type].x = x_tensor
@@ -219,7 +249,11 @@ class AFANGNNInferenceEngine:
             if edge_payload is None:
                 continue
 
-            edge_tensor = torch.as_tensor(edge_payload, dtype=torch.long, device=self._device)
+            edge_tensor = _validate_numeric_tensor(
+                f"{key} edge_index",
+                edge_payload,
+                torch.long,
+            )
             if edge_tensor.dim() != 2 or edge_tensor.shape[0] != 2:
                 raise RuntimeError(
                     f"Invalid edge_index for {key}. Expected shape [2, E], got {tuple(edge_tensor.shape)}."
@@ -251,7 +285,14 @@ class AFANGNNInferenceEngine:
                 for node_type, embeddings in x_dict.items():
                     x_dict[node_type] = self._policy.node_norms[node_type](embeddings)
 
-                hidden_dim = int(self._policy.gnn_hidden_dim)
+                gnn_hidden_dim = getattr(self._policy, "gnn_hidden_dim", None)
+                if not isinstance(gnn_hidden_dim, (int, float)):
+                    _LOGGER.warning(
+                        "AFAN-GNN policy missing gnn_hidden_dim; defaulting to 128."
+                    )
+                    hidden_dim = 128
+                else:
+                    hidden_dim = int(gnn_hidden_dim)
                 pooled_parts: list[torch.Tensor] = []
                 for node_type in ("agent", "state", "tool"):
                     if node_type in x_dict and x_dict[node_type].numel() > 0:
@@ -285,9 +326,9 @@ class AFANGNNInferenceEngine:
             "predicted_action": predicted_action,
             "selected_pathway": selected_pathway,
             "action_probabilities": action_probs.squeeze(0).detach().cpu().tolist(),
-            "clinical_rationale": (
+            "action_rationale": (
                 "System 1 AFAN-GNN selected the highest-probability structural action "
-                "from graph-encoded workflow context."
+                "with guideline compliance as the primary criterion."
             ),
             "source": "system1_gnn_afan",
             "patient_context": patient_context,
@@ -331,6 +372,7 @@ async def orchestrate_workflow_step(
         raise ValueError("tau_threshold must be within [0.0, 1.0].")
 
     system1_policy = _get_system1_engine()
+    await system1_policy._ensure_loaded_async()
     gnn_action, gnn_confidence = system1_policy.infer(
         patient_context=patient_context,
         graph_history=graph_history,

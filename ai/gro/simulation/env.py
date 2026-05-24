@@ -6,6 +6,7 @@ import numpy as np
 import json
 import os
 import random
+from typing import Any
 
 # Import GuidanceMechanism (optional)
 try:
@@ -23,18 +24,18 @@ except ImportError:
 if not SINGLE_GUIDANCE_AVAILABLE and not DUAL_GUIDANCE_AVAILABLE:
     print("Warning: No GuidanceMechanism available. Running without guidance.")
 
-class ClinicalWorkflowEnv(gym.Env):
+class GuidelineCompliantEnv(gym.Env):
     """
-    Môi trường Mô phỏng cho VHAS, tuân thủ chuẩn Gymnasium.
-    Môi trường này là một "Cỗ máy Tra cứu" (Lookup Machine) - nó KHÔNG suy nghĩ,
-    KHÔNG có logic if/else về y tế. Nó chỉ tra cứu state transitions từ Knowledge Base
-    được biên dịch từ 2000 "dấu vết vàng".
+    Simulation environment that follows Gymnasium interfaces.
+    This environment is a lookup-based engine with no domain-specific if/else logic.
+    It retrieves state transitions from a simulation knowledge base compiled from
+    curated reference traces.
     """
     metadata = {'render_modes': ['human']}
 
     def __init__(self, 
                  encoder_model, 
-                 scenarios_data_dir: str, 
+                 traces_filepath: str, 
                  kb_path: str = "data/simulation_kb.json",
                  guidance_encoder_path: str = None,
                  guidance_embedding_space_path: str = None,
@@ -43,9 +44,9 @@ class ClinicalWorkflowEnv(gym.Env):
                  use_dual_encoder: bool = False):  # NEW: Flag to use dual-encoder
         super().__init__()
         
-        print("--- Initializing ClinicalWorkflowEnv (Lookup-Based) ---")
+        print("--- Initializing GuidelineCompliantEnv (Lookup-Based) ---")
         
-        # 1. Tải Knowledge Base với state transitions
+        # 1. Load Simulation Knowledge Base with state transitions
         self.encoder = encoder_model
         with open(kb_path, 'r', encoding='utf-8') as f:
             self.knowledge_base = json.load(f)
@@ -82,8 +83,8 @@ class ClinicalWorkflowEnv(gym.Env):
         else:
             print(f"   ℹ️  Guidance Mechanism disabled (use_guidance={use_guidance})")
         
-        # 3. Tải expert traces từ batch folders
-        self.all_traces_data = self._load_expert_traces(scenarios_data_dir)
+        # 3. Tải expert traces từ unified JSON file
+        self.all_traces_data = self._load_expert_traces(traces_filepath)
         
         # 4. Định nghĩa Không gian Hành động (Action Space)
         # Trích xuất agent names từ traces thay vì từ AGENT_REGISTRY_SIM
@@ -102,36 +103,36 @@ class ClinicalWorkflowEnv(gym.Env):
         self.current_expert_trace = None  # Chuỗi (State, Action) của chuyên gia
         self.current_state_text = None    # State hiện tại trong episode
         
-        print(f"--- ClinicalWorkflowEnv Initialized Successfully with {len(self.all_traces_data)} traces. ---")
+        print(
+            f"--- GuidelineCompliantEnv Initialized Successfully with "
+            f"{len(self.all_traces_data)} traces. ---"
+        )
 
-    def _load_expert_traces(self, scenarios_data_dir: str) -> list:
-        """Tải và parse tất cả traces từ batch folders."""
-        all_traces = []
-        print(f"Loading expert traces from {scenarios_data_dir}...")
-        
-        if not os.path.isdir(scenarios_data_dir):
-            raise FileNotFoundError(f"Directory not found at: {scenarios_data_dir}")
+    def _load_expert_traces(self, traces_filepath: str) -> list:
+        """Tải và parse expert traces từ một unified JSON file."""
+        print(f"Loading expert traces from {traces_filepath}...")
 
-        # Tìm các batch folders
-        batch_folders = sorted([f for f in os.listdir(scenarios_data_dir) 
-                               if f.startswith('batch_') and os.path.isdir(os.path.join(scenarios_data_dir, f))])
-        
-        for batch_folder in batch_folders:
-            batch_num = batch_folder.split('_')[1]
-            trace_file = os.path.join(scenarios_data_dir, batch_folder, f'traces_{batch_num}.json')
-            if os.path.exists(trace_file):
-                with open(trace_file, 'r', encoding='utf-8') as f:
-                    traces = json.load(f)
-                    all_traces.extend(traces)
-        
-        print(f"Loaded {len(all_traces)} traces from {len(batch_folders)} batches.")
-        return all_traces
+        if not os.path.isfile(traces_filepath):
+            raise FileNotFoundError(f"Trace file not found at: {traces_filepath}")
 
-    def _get_obs(self, clinical_state_text: str) -> np.ndarray:
-        """Biến một chuỗi trạng thái thành một vector observation."""
-        return self.encoder.encode(clinical_state_text)
+        with open(traces_filepath, 'r', encoding='utf-8') as f:
+            traces = json.load(f)
 
-    def get_candidate_actions(self, current_state_text: str = None, top_k: int = 5) -> dict:
+        if not isinstance(traces, list):
+            raise ValueError("Trace file must contain a JSON list of traces.")
+
+        print(f"Loaded {len(traces)} traces from unified file.")
+        return traces
+
+    def _get_obs(self, semantic_state_text: str) -> np.ndarray:
+        """Convert a state text into an observation vector."""
+        return self.encoder.encode(semantic_state_text)
+
+    def get_candidate_actions(
+        self,
+        current_state_text: str | None = None,
+        top_k: int = 5,
+    ) -> dict[str, Any]:
         """
         Lấy danh sách candidate actions cho state hiện tại sử dụng Guidance Mechanism.
         
@@ -186,7 +187,11 @@ class ClinicalWorkflowEnv(gym.Env):
 
 
 
-    def reset(self, seed=None, options=None):
+    def reset(
+        self,
+        seed: int | None = None,
+        options: dict[str, Any] | None = None,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         """Bắt đầu một episode mới."""
         super().reset(seed=seed)
         
@@ -217,7 +222,7 @@ class ClinicalWorkflowEnv(gym.Env):
         
         return observation, info
 
-    def step(self, action: int):
+    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict[str, Any]]:
         """Thực thi một hành động bằng cách TRA CỨU state transition trong KB."""
         
         agent_name_to_call = self.action_to_name[action]

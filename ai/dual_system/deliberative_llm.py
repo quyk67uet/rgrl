@@ -15,6 +15,7 @@ from .prompts import SYS2_GENERATOR_PROMPT, SYS2_REVISER_PROMPT, SYS2_VERIFIER_P
 
 _GENERATOR_REVISER_MODEL = "gpt-4.1"
 _VERIFIER_MODEL = "gpt-5.2"
+_async_client: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class VerificationResult:
 
 
 def _build_openai_client() -> Any:
-    """Create an AsyncOpenAI client with a runtime import guard.
+    """Create or return a cached AsyncOpenAI client with a runtime import guard.
 
     Returns:
         Any: AsyncOpenAI client instance.
@@ -34,6 +35,10 @@ def _build_openai_client() -> Any:
     Raises:
         RuntimeError: If the openai package is unavailable.
     """
+    global _async_client
+    if _async_client is not None:
+        return _async_client
+
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:
@@ -41,7 +46,8 @@ def _build_openai_client() -> Any:
             "openai is required for the deliberative pipeline. Install with `pip install openai`."
         ) from exc
 
-    return AsyncOpenAI()
+    _async_client = AsyncOpenAI()
+    return _async_client
 
 
 async def _json_chat_completion(
@@ -49,8 +55,9 @@ async def _json_chat_completion(
     model: str,
     system_prompt: str,
     user_prompt: str,
+    required_keys: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run a JSON-constrained chat completion call and parse the result."""
+    """Run a JSON-constrained chat completion call, parse, and validate the result."""
     response = await client.chat.completions.create(
         model=model,
         messages=[
@@ -67,9 +74,19 @@ async def _json_chat_completion(
         raise ValueError("OpenAI response did not include a valid message payload.") from exc
 
     try:
-        return json.loads(raw_content)
+        payload = json.loads(raw_content)
     except json.JSONDecodeError as exc:
         raise ValueError(f"OpenAI response was not valid JSON: {raw_content}") from exc
+
+    if required_keys:
+        if not isinstance(payload, dict):
+            raise ValueError("OpenAI response JSON must be an object when required_keys is set.")
+        missing_keys = [key for key in required_keys if key not in payload]
+        if missing_keys:
+            missing_list = ", ".join(missing_keys)
+            raise ValueError(f"OpenAI response JSON missing required keys: {missing_list}")
+
+    return payload
 
 
 def _build_generator_prompt(
@@ -78,7 +95,7 @@ def _build_generator_prompt(
     previous_feedback: str | None,
 ) -> str:
     """Construct the user prompt for the Generator agent."""
-    blocks = [f"Patient context:\n{patient_context}"]
+    blocks = [f"Task context:\n{patient_context}"]
 
     if previous_candidate is not None:
         blocks.append(
@@ -98,7 +115,7 @@ async def _generate_candidate(
     previous_candidate: dict[str, Any] | None,
     previous_feedback: str | None,
 ) -> dict[str, Any]:
-    """Generate a candidate workflow from patient context and prior signals."""
+    """Generate a candidate workflow from task context and prior signals."""
     return await _json_chat_completion(
         client=client,
         model=_GENERATOR_REVISER_MODEL,
@@ -108,6 +125,7 @@ async def _generate_candidate(
             previous_candidate=previous_candidate,
             previous_feedback=previous_feedback,
         ),
+        required_keys=["selected_pathway", "clinical_rationale", "steps"],
     )
 
 
@@ -116,10 +134,10 @@ async def _verify_candidate(
     patient_context: str,
     candidate_solution: dict[str, Any],
 ) -> VerificationResult:
-    """Verify compliance of a candidate workflow against clinical constraints."""
+    """Verify compliance of a candidate workflow against operational guidelines."""
     verifier_input = "\n\n".join(
         [
-            f"Patient context:\n{patient_context}",
+            f"Task context:\n{patient_context}",
             "Candidate solution JSON:",
             json.dumps(candidate_solution, indent=2, sort_keys=True),
         ]
@@ -129,6 +147,7 @@ async def _verify_candidate(
         model=_VERIFIER_MODEL,
         system_prompt=SYS2_VERIFIER_PROMPT,
         user_prompt=verifier_input,
+        required_keys=["status", "feedback"],
     )
 
     status = str(raw_verdict.get("status", "Flawed")).strip().capitalize()
@@ -148,7 +167,7 @@ async def _revise_candidate(
     """Revise a flawed candidate using verifier feedback."""
     reviser_input = "\n\n".join(
         [
-            f"Patient context:\n{patient_context}",
+            f"Task context:\n{patient_context}",
             "Flawed candidate solution JSON:",
             json.dumps(candidate_solution, indent=2, sort_keys=True),
             f"Verifier feedback:\n{verifier_feedback}",
@@ -160,6 +179,7 @@ async def _revise_candidate(
         model=_GENERATOR_REVISER_MODEL,
         system_prompt=SYS2_REVISER_PROMPT,
         user_prompt=reviser_input,
+        required_keys=["selected_pathway", "clinical_rationale", "steps"],
     )
 
     # Preserve existing keys if the reviser only returns a partial correction.
@@ -195,7 +215,7 @@ async def run_deliberative_pipeline(patient_context: str, max_retries: int = 3) 
     3. If flawed, Reviser attempts to correct the candidate.
 
     Args:
-        patient_context: Clinical context string for the current episode/step.
+        patient_context: Task context string for the current episode/step.
         max_retries: Maximum number of Generator-Verifier iterations.
             If set to 0, runs Generator-only mode (no Verifier/Reviser).
 
@@ -206,7 +226,7 @@ async def run_deliberative_pipeline(patient_context: str, max_retries: int = 3) 
         ValueError: If inputs are invalid.
     """
     if not patient_context or not patient_context.strip():
-        raise ValueError("patient_context must be a non-empty string.")
+        raise ValueError("context input must be a non-empty string.")
     if max_retries < 0:
         raise ValueError("max_retries must be >= 0.")
 
