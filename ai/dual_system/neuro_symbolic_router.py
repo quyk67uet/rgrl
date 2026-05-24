@@ -9,6 +9,7 @@ This module provides production-oriented routing logic:
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +38,7 @@ _ACTION_TO_PATHWAY = {
 }
 
 _model_load_lock = asyncio.Lock()
+_LOGGER = logging.getLogger(__name__)
 
 
 class AFANGNNInferenceEngine:
@@ -80,10 +82,11 @@ class AFANGNNInferenceEngine:
                 if out_features > 1:
                     return out_features
 
-        raise RuntimeError(
+        _LOGGER.warning(
             "Unable to infer action-space size from checkpoint state_dict. "
-            "Expected actor head weight tensor to be present."
+            "Defaulting to 5 actions."
         )
+        return 5
 
     def _build_policy_instance(self, num_actions: int) -> Any:
         """Instantiate AFAN policy architecture for checkpoint loading."""
@@ -263,7 +266,14 @@ class AFANGNNInferenceEngine:
                 for node_type, embeddings in x_dict.items():
                     x_dict[node_type] = self._policy.node_norms[node_type](embeddings)
 
-                hidden_dim = int(self._policy.gnn_hidden_dim)
+                gnn_hidden_dim = getattr(self._policy, "gnn_hidden_dim", None)
+                if not isinstance(gnn_hidden_dim, (int, float)):
+                    _LOGGER.warning(
+                        "AFAN-GNN policy missing gnn_hidden_dim; defaulting to 128."
+                    )
+                    hidden_dim = 128
+                else:
+                    hidden_dim = int(gnn_hidden_dim)
                 pooled_parts: list[torch.Tensor] = []
                 for node_type in ("agent", "state", "tool"):
                     if node_type in x_dict and x_dict[node_type].numel() > 0:
