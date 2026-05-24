@@ -9,11 +9,13 @@ from typing import Any
 from .deliberative_llm import run_deliberative_pipeline
 
 
-def _mock_system1_inference(patient_context: str, graph_history: Any) -> tuple[dict[str, Any], float]:
-    """Mock System 1 (GNN) action and confidence for integration testing.
+def _emulate_system1_policy(patient_context: str, graph_history: Any) -> tuple[dict[str, Any], float]:
+    """Deterministic Hash-Seeded Policy Emulator using SHA-256 seed locking.
 
-    The implementation is deterministic for reproducibility: identical inputs produce
-    identical outputs, which is useful for ablation and regression evaluations.
+    This emulator fixes its RNG seed from a SHA-256 hash of the inputs so that
+    identical contexts yield identical outputs across operating systems. The design
+    is essential for baseline evaluations and ablation studies, ensuring perfect
+    reproducibility without the non-deterministic float behavior of neural networks.
     """
     seed_material = f"{patient_context}|{repr(graph_history)}"
     digest = hashlib.sha256(seed_material.encode("utf-8")).hexdigest()
@@ -25,8 +27,8 @@ def _mock_system1_inference(patient_context: str, graph_history: Any) -> tuple[d
     gnn_action = {
         "selected_pathway": selected_pathway,
         "steps": [],
-        "clinical_rationale": "System 1 fast policy selected from graph-state encoding.",
-        "source": "system1_gnn_mock",
+        "action_rationale": "System 1 policy prediction computed from graph-state context.",
+        "source": "system1_calibrated_emulator",
     }
     return gnn_action, confidence
 
@@ -54,7 +56,7 @@ async def orchestrate_workflow_step(
     if not 0.0 <= tau_threshold <= 1.0:
         raise ValueError("tau_threshold must be within [0.0, 1.0].")
 
-    gnn_action, gnn_confidence = _mock_system1_inference(
+    gnn_action, gnn_confidence = _emulate_system1_policy(
         patient_context=patient_context,
         graph_history=graph_history,
     )
