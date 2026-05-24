@@ -55,8 +55,9 @@ async def _json_chat_completion(
     model: str,
     system_prompt: str,
     user_prompt: str,
+    required_keys: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Run a JSON-constrained chat completion call and parse the result."""
+    """Run a JSON-constrained chat completion call, parse, and validate the result."""
     response = await client.chat.completions.create(
         model=model,
         messages=[
@@ -73,9 +74,19 @@ async def _json_chat_completion(
         raise ValueError("OpenAI response did not include a valid message payload.") from exc
 
     try:
-        return json.loads(raw_content)
+        payload = json.loads(raw_content)
     except json.JSONDecodeError as exc:
         raise ValueError(f"OpenAI response was not valid JSON: {raw_content}") from exc
+
+    if required_keys:
+        if not isinstance(payload, dict):
+            raise ValueError("OpenAI response JSON must be an object when required_keys is set.")
+        missing_keys = [key for key in required_keys if key not in payload]
+        if missing_keys:
+            missing_list = ", ".join(missing_keys)
+            raise ValueError(f"OpenAI response JSON missing required keys: {missing_list}")
+
+    return payload
 
 
 def _build_generator_prompt(
@@ -114,6 +125,7 @@ async def _generate_candidate(
             previous_candidate=previous_candidate,
             previous_feedback=previous_feedback,
         ),
+        required_keys=["selected_pathway", "clinical_rationale", "steps"],
     )
 
 
@@ -135,6 +147,7 @@ async def _verify_candidate(
         model=_VERIFIER_MODEL,
         system_prompt=SYS2_VERIFIER_PROMPT,
         user_prompt=verifier_input,
+        required_keys=["status", "feedback"],
     )
 
     status = str(raw_verdict.get("status", "Flawed")).strip().capitalize()
@@ -166,6 +179,7 @@ async def _revise_candidate(
         model=_GENERATOR_REVISER_MODEL,
         system_prompt=SYS2_REVISER_PROMPT,
         user_prompt=reviser_input,
+        required_keys=["selected_pathway", "clinical_rationale", "steps"],
     )
 
     # Preserve existing keys if the reviser only returns a partial correction.
