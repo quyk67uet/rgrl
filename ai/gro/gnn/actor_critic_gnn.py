@@ -129,7 +129,7 @@ class ActorCriticGNN(nn.Module):
                     # Khởi tạo bảng mapping với giá trị -1 (invalid)
                     mapping = torch.full((max_nodes,), -1, dtype=torch.long, device=device)
                     # Lấy danh sách index cũ (các vị trí mask == True)
-                    old_indices = torch.nonzero(mask, as_tuple=True)[0]
+                    old_indices = torch.nonzero(mask, as_tuple=True)[0].to(device)
                     # Gán index mới (0, 1, 2...) cho các vị trí đó
                     mapping[old_indices] = torch.arange(num_valid_nodes, device=device)
                     
@@ -170,7 +170,9 @@ class ActorCriticGNN(nn.Module):
                     if valid_edges_mask.sum() > 0:
                         final_src = src_new[valid_edges_mask]
                         final_dst = dst_new[valid_edges_mask]
-                        data[pyg_key].edge_index = torch.stack([final_src, final_dst], dim=0)
+                        data[pyg_key].edge_index = torch.stack(
+                            [final_src, final_dst], dim=0
+                        ).to(device)
             
             data_list.append(data)
 
@@ -300,7 +302,7 @@ class ActorCriticGNN(nn.Module):
             raise RuntimeError("Distribution not initialized. Call act() first.")
         probs = self.distribution.probs
         # Shape: [batch_size, num_actions]
-        return torch.ones_like(probs)
+        return torch.ones_like(probs, device=probs.device, requires_grad=False).detach()
     
     @property
     def entropy(self) -> torch.Tensor:
