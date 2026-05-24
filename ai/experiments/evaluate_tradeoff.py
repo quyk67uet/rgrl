@@ -82,13 +82,13 @@ def _normalize_trace(trace_like: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(trace_like, dict):
         return None
 
-    patient_context = trace_like.get("patient_context")
-    if not isinstance(patient_context, str) or not patient_context.strip():
+    input_context = trace_like.get("patient_context")
+    if not isinstance(input_context, str) or not input_context.strip():
         scenario = trace_like.get("input_scenario", {})
         if isinstance(scenario, dict):
-            patient_context = scenario.get("nl_command")
+            input_context = scenario.get("nl_command")
 
-    if not isinstance(patient_context, str) or not patient_context.strip():
+    if not isinstance(input_context, str) or not input_context.strip():
         return None
 
     spans = trace_like.get("spans", [])
@@ -112,11 +112,12 @@ def _normalize_trace(trace_like: dict[str, Any]) -> dict[str, Any] | None:
 
     trace_id = trace_like.get("trace_id")
     if not isinstance(trace_id, str) or not trace_id:
-        trace_id = f"trace_{abs(hash(patient_context))}"
+        trace_id = f"trace_{abs(hash(input_context))}"
 
     return {
         "trace_id": trace_id,
-        "patient_context": patient_context.strip(),
+        "input_context": input_context.strip(),
+        "context": input_context.strip(),
         "graph_history": trace_like.get("graph_history", spans),
         "selected_pathway": selected_pathway,
         "ground_truth_agent_sequence": [str(item) for item in ground_truth_sequence],
@@ -173,7 +174,7 @@ async def evaluate_tau(
     tau_threshold: float,
     traces: list[dict[str, Any]],
 ) -> dict[str, float | int]:
-    """Evaluate one tau threshold over real traces using the production router."""
+    """Evaluate one tau threshold over real workflow traces using the production router."""
     sys2_count = 0
     compliance_count = 0
     total = len(traces)
@@ -181,12 +182,17 @@ async def evaluate_tau(
 
     async def _run_with_semaphore(index: int, trace: dict[str, Any]) -> dict[str, Any]:
         print(
-            f"[tradeoff] tau={tau_threshold:.2f} | Evaluating Trace {index}/{total}...",
+            f"[tradeoff] tau={tau_threshold:.2f} | Evaluating workflow task {index}/{total}...",
             flush=True,
         )
+        input_context = trace.get("input_context")
+        if not isinstance(input_context, str) or not input_context:
+            input_context = trace.get("context")
+        if not isinstance(input_context, str) or not input_context:
+            input_context = trace.get("patient_context", "")
         async with semaphore:
             return await orchestrate_workflow_step(
-                patient_context=str(trace["patient_context"]),
+                patient_context=str(input_context),
                 graph_history=trace.get("graph_history", []),
                 tau_threshold=tau_threshold,
             )
@@ -245,7 +251,7 @@ async def run_tradeoff_evaluation() -> list[dict[str, float | int]]:
     """Run the full tau sweep and return all metric rows."""
     traces = load_test_traces()
     print(
-        "[tradeoff] Loaded {count} traces from {path} (thesis target test size: {target}).".format(
+        "[tradeoff] Loaded {count} workflow tasks from {path} (target size: {target}).".format(
             count=len(traces),
             path=TEST_TRACE_PATH,
             target=EXPECTED_TEST_SIZE,
