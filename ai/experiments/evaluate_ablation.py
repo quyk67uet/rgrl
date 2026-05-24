@@ -71,6 +71,27 @@ def _extract_agent_sequence_from_action(action: Any) -> list[str]:
     return sequence
 
 
+def _is_retryable_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    retry_terms = (
+        "rate limit",
+        "too many requests",
+        "429",
+        "timeout",
+        "timed out",
+        "temporarily",
+        "temporary",
+        "unavailable",
+        "connection",
+        "network",
+        "server error",
+        "502",
+        "503",
+        "504",
+    )
+    return any(term in message for term in retry_terms)
+
+
 async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[str, Any]:
     """Run one mode on one trace and return normalized execution payload."""
     input_scenario = trace.get("input_scenario")
@@ -87,38 +108,59 @@ async def _run_mode_on_trace(mode: AblationMode, trace: dict[str, Any]) -> dict[
     if not isinstance(history, list):
         history = []
 
-    if mode == "gnn_only":
-        router_result = await orchestrate_workflow_step(
-            patient_context=context,
-            graph_history=history,
-            tau_threshold=0.0,
-        )
-        return {
-            "selected_system": router_result.get("selected_system"),
-            "action": router_result.get("action"),
-            "raw_result": router_result,
-        }
+    max_retries = 3
+    base_delay = 0.5
 
-    if mode == "single_llm":
-        llm_result = await run_deliberative_pipeline(
-            patient_context=context,
-            max_retries=0,
-        )
-        return {
-            "selected_system": "system2",
-            "action": llm_result.get("action"),
-            "raw_result": llm_result,
-        }
+    for attempt in range(max_retries + 1):
+        try:
+            if mode == "gnn_only":
+                router_result = await orchestrate_workflow_step(
+                    patient_context=context,
+                    graph_history=history,
+                    tau_threshold=0.0,
+                )
+                return {
+                    "selected_system": router_result.get("selected_system"),
+                    "action": router_result.get("action"),
+                    "raw_result": router_result,
+                }
 
-    llm_result = await run_deliberative_pipeline(
-        patient_context=context,
-        max_retries=3,
-    )
-    return {
-        "selected_system": "system2",
-        "action": llm_result.get("action"),
-        "raw_result": llm_result,
-    }
+            if mode == "single_llm":
+                llm_result = await run_deliberative_pipeline(
+                    patient_context=context,
+                    max_retries=0,
+                )
+                return {
+                    "selected_system": "system2",
+                    "action": llm_result.get("action"),
+                    "raw_result": llm_result,
+                }
+
+            llm_result = await run_deliberative_pipeline(
+                patient_context=context,
+                max_retries=3,
+            )
+            return {
+                "selected_system": "system2",
+                "action": llm_result.get("action"),
+                "raw_result": llm_result,
+            }
+        except Exception as exc:  # pragma: no cover - runtime/network dependent.
+            if attempt < max_retries and _is_retryable_error(exc):
+                delay = base_delay * (2**attempt)
+                await asyncio.sleep(delay)
+                continue
+            return {
+                "selected_system": "hitl",
+                "action": None,
+                "raw_result": {
+                    "status": "hitl_required",
+                    "selected_system": "system2",
+                    "escalate_to_hitl": True,
+                    "attempts": attempt + 1,
+                    "reason": f"ablation_runtime_error: {exc}",
+                },
+            }
 
 
 async def run_ablation_experiment(
@@ -145,13 +187,23 @@ async def run_ablation_experiment(
     total_redundancy = 0.0
 
     total = len(test_cases)
-    for index, trace in enumerate(test_cases, start=1):
+    semaphore = asyncio.Semaphore(5)
+
+    async def _run_with_semaphore(index: int, trace: dict[str, Any]) -> dict[str, Any]:
         print(f"[ablation:{mode}] Evaluating Trace {index}/{total}...", flush=True)
-        try:
-            execution = await _run_mode_on_trace(mode=mode, trace=trace)
-        except Exception as exc:  # pragma: no cover - runtime/network dependent.
+        async with semaphore:
+            return await _run_mode_on_trace(mode=mode, trace=trace)
+
+    tasks = [
+        asyncio.create_task(_run_with_semaphore(index, trace))
+        for index, trace in enumerate(test_cases, start=1)
+    ]
+    executions = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for trace, execution in zip(test_cases, executions):
+        if isinstance(execution, Exception):  # pragma: no cover - runtime/network dependent.
             print(
-                f"[ablation:{mode}] trace={trace.get('trace_id')} failed with error: {exc}",
+                f"[ablation:{mode}] trace={trace.get('trace_id')} failed with error: {execution}",
                 flush=True,
             )
             hallucination_hits += 1
