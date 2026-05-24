@@ -104,6 +104,8 @@ def build_dual_space_for_model(
         print("\nLoading Dual-Encoder models...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
         state_encoder = SentenceTransformer(state_encoder_path, device=device)
+        if device == "cuda":
+            torch.cuda.empty_cache()
         action_encoder = SentenceTransformer(action_encoder_path, device=device)
         print(f"   ✓ StateEncoder loaded ({state_encoder.get_sentence_embedding_dimension()} dims)")
         print(f"   ✓ ActionEncoder loaded ({action_encoder.get_sentence_embedding_dimension()} dims)")
