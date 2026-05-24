@@ -231,7 +231,11 @@ class ActorCriticGNN(nn.Module):
         
         # Áp dụng mask: đặt logits của các hành động không hợp lệ thành -inf
         # Chuyển mask (uint8) thành boolean
-        logits[~action_masks.bool()] = -float('inf')
+        valid_mask = action_masks.bool()
+        if valid_mask.sum() == 0:
+            print("Warning: action_masks contains no valid actions; skipping mask to avoid NaNs.")
+        else:
+            logits[~valid_mask] = -float('inf')
         
         self.distribution = Categorical(logits=logits)
 
