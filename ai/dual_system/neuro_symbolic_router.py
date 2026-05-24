@@ -8,6 +8,7 @@ This module provides production-oriented routing logic:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,8 @@ _ACTION_TO_PATHWAY = {
     3: 3,  # Reconciliation indicates complex care loop
     4: 1,  # Summary default branch for low-acuity closure
 }
+
+_model_load_lock = asyncio.Lock()
 
 
 class AFANGNNInferenceEngine:
@@ -163,6 +166,15 @@ class AFANGNNInferenceEngine:
             )
 
         self._policy = policy
+
+    async def _ensure_loaded_async(self) -> None:
+        """Lazily load AFAN-GNN policy checkpoint under an async lock."""
+        if self._policy is not None:
+            return
+
+        async with _model_load_lock:
+            if self._policy is None:
+                self._ensure_loaded()
 
     def _to_heterodata(self, graph_history: Any) -> "HeteroData":
         """Convert graph_history payload into a PyG HeteroData object.
@@ -331,6 +343,7 @@ async def orchestrate_workflow_step(
         raise ValueError("tau_threshold must be within [0.0, 1.0].")
 
     system1_policy = _get_system1_engine()
+    await system1_policy._ensure_loaded_async()
     gnn_action, gnn_confidence = system1_policy.infer(
         patient_context=patient_context,
         graph_history=graph_history,
