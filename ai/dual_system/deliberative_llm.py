@@ -15,6 +15,7 @@ from .prompts import SYS2_GENERATOR_PROMPT, SYS2_REVISER_PROMPT, SYS2_VERIFIER_P
 
 _GENERATOR_REVISER_MODEL = "gpt-4.1"
 _VERIFIER_MODEL = "gpt-5.2"
+_async_client: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class VerificationResult:
 
 
 def _build_openai_client() -> Any:
-    """Create an AsyncOpenAI client with a runtime import guard.
+    """Create or return a cached AsyncOpenAI client with a runtime import guard.
 
     Returns:
         Any: AsyncOpenAI client instance.
@@ -34,6 +35,10 @@ def _build_openai_client() -> Any:
     Raises:
         RuntimeError: If the openai package is unavailable.
     """
+    global _async_client
+    if _async_client is not None:
+        return _async_client
+
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:
@@ -41,7 +46,8 @@ def _build_openai_client() -> Any:
             "openai is required for the deliberative pipeline. Install with `pip install openai`."
         ) from exc
 
-    return AsyncOpenAI()
+    _async_client = AsyncOpenAI()
+    return _async_client
 
 
 async def _json_chat_completion(
