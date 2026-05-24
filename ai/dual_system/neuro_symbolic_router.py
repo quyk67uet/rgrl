@@ -200,6 +200,17 @@ class AFANGNNInferenceEngine:
 
         data = HeteroData()
 
+        def _validate_numeric_tensor(label: str, payload: Any, dtype: Any) -> "torch.Tensor":
+            try:
+                tensor = torch.as_tensor(payload, dtype=dtype, device=self._device)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{label} contains non-numeric values.") from exc
+            if tensor.numel() == 0:
+                raise ValueError(f"{label} is empty.")
+            if torch.is_floating_point(tensor) and not torch.isfinite(tensor).all():
+                raise ValueError(f"{label} contains non-finite values.")
+            return tensor
+
         # Node feature conversion
         for node_type in ("state", "agent", "tool"):
             x_key = f"{node_type}_x"
@@ -214,7 +225,11 @@ class AFANGNNInferenceEngine:
             if raw_x is None:
                 continue
 
-            x_tensor = torch.as_tensor(raw_x, dtype=torch.float32, device=self._device)
+            x_tensor = _validate_numeric_tensor(
+                f"{node_type} node features",
+                raw_x,
+                torch.float32,
+            )
             if x_tensor.dim() == 1:
                 x_tensor = x_tensor.unsqueeze(0)
             data[node_type].x = x_tensor
@@ -234,7 +249,11 @@ class AFANGNNInferenceEngine:
             if edge_payload is None:
                 continue
 
-            edge_tensor = torch.as_tensor(edge_payload, dtype=torch.long, device=self._device)
+            edge_tensor = _validate_numeric_tensor(
+                f"{key} edge_index",
+                edge_payload,
+                torch.long,
+            )
             if edge_tensor.dim() != 2 or edge_tensor.shape[0] != 2:
                 raise RuntimeError(
                     f"Invalid edge_index for {key}. Expected shape [2, E], got {tuple(edge_tensor.shape)}."
@@ -307,9 +326,9 @@ class AFANGNNInferenceEngine:
             "predicted_action": predicted_action,
             "selected_pathway": selected_pathway,
             "action_probabilities": action_probs.squeeze(0).detach().cpu().tolist(),
-            "clinical_rationale": (
+            "action_rationale": (
                 "System 1 AFAN-GNN selected the highest-probability structural action "
-                "from graph-encoded workflow context."
+                "with guideline compliance as the primary criterion."
             ),
             "source": "system1_gnn_afan",
             "patient_context": patient_context,
