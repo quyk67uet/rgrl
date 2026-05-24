@@ -5,7 +5,6 @@ This script compares three real runtime configurations:
 2. single_llm
 3. proposed_3agent
 
-No mocked mode profiles or synthetic probabilities are used.
 """
 
 from __future__ import annotations
