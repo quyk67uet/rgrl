@@ -177,21 +177,30 @@ async def evaluate_tau(
     sys2_count = 0
     compliance_count = 0
     total = len(traces)
+    semaphore = asyncio.Semaphore(5)
 
-    for index, trace in enumerate(traces, start=1):
+    async def _run_with_semaphore(index: int, trace: dict[str, Any]) -> dict[str, Any]:
         print(
             f"[tradeoff] tau={tau_threshold:.2f} | Evaluating Trace {index}/{total}...",
             flush=True,
         )
-        try:
-            result = await orchestrate_workflow_step(
+        async with semaphore:
+            return await orchestrate_workflow_step(
                 patient_context=str(trace["patient_context"]),
                 graph_history=trace.get("graph_history", []),
                 tau_threshold=tau_threshold,
             )
-        except Exception as exc:  # pragma: no cover - runtime/network dependent.
+
+    tasks = [
+        asyncio.create_task(_run_with_semaphore(index, trace))
+        for index, trace in enumerate(traces, start=1)
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    for trace, result in zip(traces, results):
+        if isinstance(result, Exception):  # pragma: no cover - runtime/network dependent.
             print(
-                f"[tradeoff] trace={trace.get('trace_id')} failed with error: {exc}",
+                f"[tradeoff] trace={trace.get('trace_id')} failed with error: {result}",
                 flush=True,
             )
             continue
