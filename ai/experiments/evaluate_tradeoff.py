@@ -230,21 +230,43 @@ async def evaluate_tau(
 
 def save_tradeoff_metrics(rows: list[dict[str, float | int]], output_path: Path) -> Path:
     """Save tradeoff experiment metrics as CSV."""
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(
-            handle,
-            fieldnames=[
-                "tau_threshold",
-                "n_traces",
-                "sys2_invocation_rate",
-                "guideline_compliance_rate",
-            ],
+    resolved_path = output_path.resolve()
+    try:
+        resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(
+            "[tradeoff] Failed to create output directory at "
+            f"{resolved_path.parent}: {exc}",
+            flush=True,
         )
-        writer.writeheader()
-        writer.writerows(rows)
+        raise
 
-    return output_path
+    try:
+        with resolved_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "tau_threshold",
+                    "n_traces",
+                    "sys2_invocation_rate",
+                    "guideline_compliance_rate",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+    except OSError as exc:
+        print(
+            "[tradeoff] Failed to write metrics CSV at "
+            f"{resolved_path}: {exc}",
+            flush=True,
+        )
+        raise
+
+    print(
+        f"[tradeoff] Saved metrics to: {resolved_path}",
+        flush=True,
+    )
+    return resolved_path
 
 
 async def run_tradeoff_evaluation() -> list[dict[str, float | int]]:
@@ -273,7 +295,6 @@ async def run_tradeoff_evaluation() -> list[dict[str, float | int]]:
         )
 
     save_tradeoff_metrics(rows=rows, output_path=OUTPUT_CSV_PATH)
-    print(f"[tradeoff] Saved metrics to: {OUTPUT_CSV_PATH}", flush=True)
     return rows
 
 
