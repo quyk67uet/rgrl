@@ -24,8 +24,12 @@ WORKFLOW:
    modal volume get vhas-finetuned-output model_b_state_encoder ../output/model_b_state_encoder
    modal volume get vhas-finetuned-output model_b_action_encoder ../output/model_b_action_encoder
 """
-import modal
 import os
+
+import modal
+
+BASE_MODEL_NAME = "all-mpnet-base-v2"
+DEFAULT_FINETUNING_DATA_PATH = "/data/finetuning/wrl_finetuning_examples.json"
 
 # --- 1. Định nghĩa Môi trường ---
 app = modal.App("vhas-dual-encoder-finetuning-corrected")
@@ -61,7 +65,7 @@ output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=T
 def finetune_model_a_dual_corrected(
     batch_size: int = 32,
     num_epochs: int = 3,
-    finetuning_data_path: str = "/data/finetuning/wrl_finetuning_examples.json"
+    finetuning_data_path: str = DEFAULT_FINETUNING_DATA_PATH,
 ):
     """
     Model A (Chuyên khoa): 
@@ -98,9 +102,9 @@ def finetune_model_a_dual_corrected(
     print(f"   ℹ️  Workflow states already included in State-Action pairs")
     
     # Load BASE models for both encoders
-    print("\n🔧 Loading BASE models 'all-mpnet-base-v2'...")
-    state_encoder = SentenceTransformer('all-mpnet-base-v2', device=device)
-    action_encoder = SentenceTransformer('all-mpnet-base-v2', device=device)
+    print(f"\n🔧 Loading BASE models '{BASE_MODEL_NAME}'...")
+    state_encoder = SentenceTransformer(BASE_MODEL_NAME, device=device)
+    action_encoder = SentenceTransformer(BASE_MODEL_NAME, device=device)
     print(f"   ✓ StateEncoder loaded")
     print(f"   ✓ ActionEncoder loaded")
     
@@ -183,12 +187,12 @@ def finetune_model_a_dual_corrected(
         "model_type": "Model A - Domain-Specific",
         "architecture": "Dual-Encoder (Two-Tower)",
         "state_encoder": {
-            "base_model": "all-mpnet-base-v2",
+            "base_model": BASE_MODEL_NAME,
             "pretraining": "None",
             "finetuning_data": f"workflow_traces ({len(training_examples)} State-Action pairs)"
         },
         "action_encoder": {
-            "base_model": "all-mpnet-base-v2",
+            "base_model": BASE_MODEL_NAME,
             "pretraining": "None",
             "finetuning_data": f"workflow_traces ({len(training_examples)} pairs)"
         },
@@ -228,7 +232,7 @@ def finetune_model_a_dual_corrected(
 def finetune_model_b_dual_corrected(
     batch_size: int = 32,
     num_epochs: int = 3,
-    finetuning_data_path: str = "/data/finetuning/wrl_finetuning_examples.json",
+    finetuning_data_path: str = DEFAULT_FINETUNING_DATA_PATH,
     pretrained_action_path: str = "/pretrained/pretrained_encoder"  # Only ActionEncoder has pre-training
 ):
     """
@@ -270,7 +274,7 @@ def finetune_model_b_dual_corrected(
     
     # StateEncoder: Load from BASE (no pre-training for states)
     print("   Loading StateEncoder from BASE model...")
-    state_encoder = SentenceTransformer('all-mpnet-base-v2', device=device)
+    state_encoder = SentenceTransformer(BASE_MODEL_NAME, device=device)
     print(f"   ✓ StateEncoder loaded from BASE")
     
     # ActionEncoder: Load from PRE-TRAINED model
@@ -358,12 +362,12 @@ def finetune_model_b_dual_corrected(
         "model_type": "Model B - Comprehensive",
         "architecture": "Dual-Encoder (Two-Tower)",
         "state_encoder": {
-            "base_model": "all-mpnet-base-v2",
+            "base_model": BASE_MODEL_NAME,
             "pretraining": "None (state data not in ADP+T1)",
             "finetuning_data": f"workflow_traces ({len(training_examples)} State-Action pairs)"
         },
         "action_encoder": {
-            "base_model": "all-mpnet-base-v2",
+            "base_model": BASE_MODEL_NAME,
             "pretraining": "ADP + T1 (343K Action-Action pairs)",
             "finetuning_data": f"workflow_traces ({len(training_examples)} pairs)"
         },
