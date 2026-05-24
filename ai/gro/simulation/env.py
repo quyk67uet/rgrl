@@ -24,12 +24,12 @@ except ImportError:
 if not SINGLE_GUIDANCE_AVAILABLE and not DUAL_GUIDANCE_AVAILABLE:
     print("Warning: No GuidanceMechanism available. Running without guidance.")
 
-class ClinicalWorkflowEnv(gym.Env):
+class GuidelineCompliantEnv(gym.Env):
     """
-    Môi trường Mô phỏng cho VHAS, tuân thủ chuẩn Gymnasium.
-    Môi trường này là một "Cỗ máy Tra cứu" (Lookup Machine) - nó KHÔNG suy nghĩ,
-    KHÔNG có logic if/else về y tế. Nó chỉ tra cứu state transitions từ Knowledge Base
-    được biên dịch từ 2000 "dấu vết vàng".
+    Simulation environment that follows Gymnasium interfaces.
+    This environment is a lookup-based engine with no domain-specific if/else logic.
+    It retrieves state transitions from a simulation knowledge base compiled from
+    curated reference traces.
     """
     metadata = {'render_modes': ['human']}
 
@@ -44,9 +44,9 @@ class ClinicalWorkflowEnv(gym.Env):
                  use_dual_encoder: bool = False):  # NEW: Flag to use dual-encoder
         super().__init__()
         
-        print("--- Initializing ClinicalWorkflowEnv (Lookup-Based) ---")
+        print("--- Initializing GuidelineCompliantEnv (Lookup-Based) ---")
         
-        # 1. Tải Knowledge Base với state transitions
+        # 1. Load Simulation Knowledge Base with state transitions
         self.encoder = encoder_model
         with open(kb_path, 'r', encoding='utf-8') as f:
             self.knowledge_base = json.load(f)
@@ -103,7 +103,10 @@ class ClinicalWorkflowEnv(gym.Env):
         self.current_expert_trace = None  # Chuỗi (State, Action) của chuyên gia
         self.current_state_text = None    # State hiện tại trong episode
         
-        print(f"--- ClinicalWorkflowEnv Initialized Successfully with {len(self.all_traces_data)} traces. ---")
+        print(
+            f"--- GuidelineCompliantEnv Initialized Successfully with "
+            f"{len(self.all_traces_data)} traces. ---"
+        )
 
     def _load_expert_traces(self, traces_filepath: str) -> list:
         """Tải và parse expert traces từ một unified JSON file."""
@@ -121,9 +124,9 @@ class ClinicalWorkflowEnv(gym.Env):
         print(f"Loaded {len(traces)} traces from unified file.")
         return traces
 
-    def _get_obs(self, clinical_state_text: str) -> np.ndarray:
-        """Biến một chuỗi trạng thái thành một vector observation."""
-        return self.encoder.encode(clinical_state_text)
+    def _get_obs(self, semantic_state_text: str) -> np.ndarray:
+        """Convert a state text into an observation vector."""
+        return self.encoder.encode(semantic_state_text)
 
     def get_candidate_actions(
         self,
