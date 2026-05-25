@@ -1,19 +1,17 @@
-"""
-COMPREHENSIVE EVALUATION SUITE FOR DUAL-ENCODER
-================================================
+"""Comprehensive evaluation suite for the dual-encoder.
 
-Script tổng hợp để chạy cả evaluation và visualization cho Dual-Encoder.
+This script runs both evaluation and visualization steps for dual-encoder models.
 
-WORKFLOW:
-1. Chạy evaluation (nearest neighbors + metrics)
-2. Chạy visualization (t-SNE plots)
-3. Tạo comparison report
+Workflow:
+1. Evaluation (nearest neighbors + metrics)
+2. Visualization (t-SNE plots)
+3. Comparison report
 
-RUN:
-  $ modal run run_dual_evaluation.py
+Run:
+    $ modal run run_dual_evaluation.py
 
-OUTPUT:
-- Evaluation results (printed to console)
+Outputs:
+- Evaluation results (console)
 - t-SNE visualizations (saved to volume)
 - Comparison report (saved to volume)
 """
@@ -25,7 +23,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.manifold import TSNE
 import modal
 
-# Định nghĩa Modal App
+# Modal app definition
 app = modal.App("vhas-dual-evaluation-suite")
 
 image = (
@@ -57,7 +55,7 @@ def evaluate_dual_encoder_model(
     universe_file: str
 ):
     """
-    Đánh giá một Dual-Encoder model.
+    Evaluate a Dual-Encoder model.
     """
     print("\n" + "="*80)
     print(f"EVALUATING {model_name}")
@@ -330,7 +328,7 @@ def generate_comparison_report(result_a, result_b):
     
     # Model A Summary
     report.append("="*80)
-    report.append("MODEL A: Base → Fine-tune (Chuyên khoa)")
+    report.append("MODEL A: Base → Fine-tune (Specialist)")
     report.append("="*80)
     report.append(f"Average Top-1 Similarity: {result_a['metrics']['avg_top1_similarity']:.4f}")
     report.append(f"Average Top-3 Similarity: {result_a['metrics']['avg_top3_similarity']:.4f}")
@@ -339,7 +337,7 @@ def generate_comparison_report(result_a, result_b):
     
     # Model B Summary
     report.append("="*80)
-    report.append("MODEL B: Base → Pre-train → Fine-tune (Toàn diện)")
+    report.append("MODEL B: Base → Pre-train → Fine-tune (Generalist)")
     report.append("="*80)
     report.append(f"Average Top-1 Similarity: {result_b['metrics']['avg_top1_similarity']:.4f}")
     report.append(f"Average Top-3 Similarity: {result_b['metrics']['avg_top3_similarity']:.4f}")
@@ -361,10 +359,10 @@ def generate_comparison_report(result_a, result_b):
     report.append("")
     
     if top1_diff > 0:
-        report.append("🏆 WINNER: Model B (Toàn diện)")
+        report.append("🏆 WINNER: Model B (Generalist)")
         report.append("   → Pre-training on ADP+T1 data improved cross-modal retrieval!")
     elif top1_diff < 0:
-        report.append("🏆 WINNER: Model A (Chuyên khoa)")
+        report.append("🏆 WINNER: Model A (Specialist)")
         report.append("   → Domain-specific fine-tuning alone was sufficient!")
     else:
         report.append("🤝 TIE: Both models perform equally well")
@@ -375,7 +373,7 @@ def generate_comparison_report(result_a, result_b):
     report.append("="*80)
     report.append("- Dual-Encoder tạo ra 2 embedding spaces compatible với nhau")
     report.append("- StateEncoder encode queries, ActionEncoder encode actions")
-    report.append("- Cosine similarity trong cross-modal space đo độ phù hợp")
+    report.append("- Cosine similarity in cross-modal space measures alignment")
     report.append("- Higher similarity = Better State → Action mapping")
     report.append("="*80)
     
@@ -429,9 +427,7 @@ def generate_comparison_report(result_a, result_b):
 
 @app.local_entrypoint()
 def main():
-    """
-    Chạy toàn bộ evaluation suite.
-    """
+    """Run the full evaluation suite."""
     print("\n" + "="*80)
     print("DUAL-ENCODER COMPREHENSIVE EVALUATION SUITE")
     print("="*80)
@@ -455,15 +451,15 @@ def main():
     print("\n🔬 Evaluating Model A...")
     result_a = evaluate_dual_encoder_model.remote(
         embedding_space_dir=MODEL_A_DIR,
-        model_name="Model A (Chuyên khoa)",
-        universe_file=UNIVERSE_FILE
+        model_name="Model A (Specialist)",
+        universe_file=UNIVERSE_FILE,
     )
     
     print("\n🔬 Evaluating Model B...")
     result_b = evaluate_dual_encoder_model.remote(
         embedding_space_dir=MODEL_B_DIR,
-        model_name="Model B (Toàn diện)",
-        universe_file=UNIVERSE_FILE
+        model_name="Model B (Generalist)",
+        universe_file=UNIVERSE_FILE,
     )
     
     # Step 2: Run Visualization
@@ -471,20 +467,20 @@ def main():
     print("STEP 2: VISUALIZATION (t-SNE Plots)")
     print("="*80)
     
-    print("\n🎨 Visualizing Model A...")
+    print("🎨 Visualizing Model A...")
     visualize_dual_encoder_model.remote(
         embedding_space_dir=MODEL_A_DIR,
-        model_name="Model A (Chuyên khoa)",
+        model_name="Model A (Specialist)",
         universe_file=UNIVERSE_FILE,
-        output_prefix="model_a_dual"
+        output_prefix="model_a_dual",
     )
     
-    print("\n🎨 Visualizing Model B...")
+    print("🎨 Visualizing Model B...")
     visualize_dual_encoder_model.remote(
         embedding_space_dir=MODEL_B_DIR,
-        model_name="Model B (Toàn diện)",
+        model_name="Model B (Generalist)",
         universe_file=UNIVERSE_FILE,
-        output_prefix="model_b_dual"
+        output_prefix="model_b_dual",
     )
     
     # Step 3: Generate Comparison Report

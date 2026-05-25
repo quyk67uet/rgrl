@@ -6,7 +6,7 @@ from tqdm import tqdm
 from itertools import groupby
 
 def parse_sql_action(sql_content: str) -> str:
-    """Trích xuất loại hành động chính từ một câu lệnh SQL."""
+    """Extract the primary action type from an SQL statement."""
     sql_content = sql_content.strip().upper()
     if sql_content.startswith("SELECT"):
         return "SELECT_JOIN" if "JOIN" in sql_content else "SELECT"
@@ -16,14 +16,15 @@ def parse_sql_action(sql_content: str) -> str:
     return "EXECUTE_SQL"
 
 def parse_bash_action(bash_content: str) -> str:
-    """Trích xuất lệnh chính đầu tiên từ một chuỗi lệnh bash."""
+    """Extract the main command from a bash command string."""
     cleaned_content = re.sub(r'^\s*cd .*? &&\s*', '', bash_content.strip())
     parts = cleaned_content.split()
     return parts[0] if parts else "execute_bash"
 
 def parse_generic_code_action(code_content: str) -> str:
-    """Heuristic để tìm tên hàm/class được định nghĩa hoặc gọi."""
+    """Heuristic to find a defined or called function/class name in code."""
     # Ưu tiên tìm định nghĩa hàm/class
+    # Prefer finding function/class definitions first
     def_match = re.search(r'(?:def|fn|function|class)\s+([\w_]+)', code_content)
     if def_match:
         return f"define:{def_match.group(1)}"
@@ -37,7 +38,8 @@ def parse_generic_code_action(code_content: str) -> str:
 
 def extract_action_sequences(adp_std_file_path: str) -> list[list[str]]:
     """
-    Đọc file full_std.jsonl và trích xuất chuỗi hành động, xử lý đa ngôn ngữ và các loại action.
+    Read a full_std.jsonl file and extract action sequences, handling multiple
+    languages and action types.
     """
     action_sequences = []
     print(f"Processing file: {os.path.basename(adp_std_file_path)}")
@@ -65,7 +67,7 @@ def extract_action_sequences(adp_std_file_path: str) -> list[list[str]]:
                         kwargs = step.get("kwargs", {})
                         command = kwargs.get("command") if isinstance(kwargs, dict) else None
                         
-                        # Bỏ qua hành động submit cuối cùng
+                        # Skip final 'submit' action
                         if func_name == "submit": continue
 
                         action_name = f"{func_name}:{command}" if command else func_name
@@ -85,20 +87,20 @@ def extract_action_sequences(adp_std_file_path: str) -> list[list[str]]:
                             
                         action_name = f"{lang}:{parsed_func}"
                     
-                    # Lọc bỏ các message_action không mang thông tin
+                    # Filter out message_action entries without useful content
                     elif step_class == "message_action":
                         content = step.get("content", "")
                         if content and "<finish>" in content:
-                            continue # Bỏ qua các message kết thúc
+                            continue # Skip terminal/finish messages
 
                     if action_name:
                         raw_sequence.append(action_name)
                 
                 # --- Clean up the sequence ---
-                # 1. Loại bỏ các hành động lặp lại liên tiếp
+                # 1. Remove consecutive duplicate actions
                 cleaned_sequence = [k for k, g in groupby(raw_sequence)]
-                
-                # 2. Chỉ thêm vào nếu chuỗi không rỗng
+
+                # 2. Only add non-empty sequences
                 if cleaned_sequence:
                     action_sequences.append(cleaned_sequence)
 

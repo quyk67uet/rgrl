@@ -8,9 +8,9 @@ import seaborn as sns
 import pandas as pd
 
 def create_labels(id_to_name: dict, universe_file: str, states_file: str) -> list:
-    """Tạo nhãn chi tiết cho mỗi thực thể trong corpus với grouping hợp lý."""
+    """Create detailed labels for each entity in the corpus with sensible grouping."""
     
-    # Tải định nghĩa để biết agent nào sở hữu tool nào
+    # Load definitions to determine which agent owns each tool
     with open(universe_file, 'r', encoding='utf-8') as f:
         universe = json.load(f)
     tool_to_owner = {tool['name']: tool['owner'] for tool in universe.get('tools', [])}
@@ -20,14 +20,14 @@ def create_labels(id_to_name: dict, universe_file: str, states_file: str) -> lis
     for i in range(len(id_to_name)):
         name = id_to_name[str(i)]
         if name in agent_names:
-            # Mỗi Agent có nhãn riêng
+            # Each agent gets its own label
             labels.append(f"Agent: {name}")
         elif name in tool_to_owner:
-            # Mỗi Tool có nhãn riêng với owner
+            # Each tool gets its own label with owner
             owner = tool_to_owner[name]
             labels.append(f"Tool: {name} ({owner})")
-        else: # It's a clinical state - group theo workflow phase
-            # Phân loại states theo giai đoạn workflow
+        else:  # Clinical state - group by workflow phase
+            # Classify states by workflow phase
             if "Initial State" in name:
                 labels.append("State: Initial Arrival")
             elif "Triage completed" in name:
@@ -47,10 +47,10 @@ def create_labels(id_to_name: dict, universe_file: str, states_file: str) -> lis
     return labels
 
 def visualize_embedding_space(embedding_dir: str, universe_file: str, states_file: str, output_image_file: str):
-    """Tải embedding space và trực quan hóa bằng t-SNE."""
-    print(f"\n--- Visualizing Embedding Space from: {embedding_dir} ---")
+    """Load embedding space and visualize it with t-SNE."""
+    print(f"\n--- Visualizing embedding space from: {embedding_dir} ---")
 
-    # 1. Tải Dữ liệu
+    # 1. Load data
     try:
         embeddings = np.load(os.path.join(embedding_dir, 'embeddings.npy'))
         with open(os.path.join(embedding_dir, 'id_to_name.json'), 'r') as f:
@@ -58,46 +58,45 @@ def visualize_embedding_space(embedding_dir: str, universe_file: str, states_fil
     except FileNotFoundError:
         print(f"ERROR: Embedding files not found in {embedding_dir}. Skipping.")
         return
-
-    # 2. Tạo Nhãn
+    # 2. Create labels
     labels = create_labels(id_to_name, universe_file, states_file)
     
-    # 3. Chạy t-SNE
+    # 3. Run t-SNE
     print("Running t-SNE... (This can take a minute)")
     tsne = TSNE(n_components=2, perplexity=min(30, len(embeddings)-1), random_state=42, max_iter=1000)
     embeddings_2d = tsne.fit_transform(embeddings)
 
-    # 4. Chuẩn bị dữ liệu để vẽ
+    # 4. Prepare data for plotting
     df = pd.DataFrame({
         'x': embeddings_2d[:, 0],
         'y': embeddings_2d[:, 1],
         'label': labels
     })
 
-    # 5. Vẽ Biểu đồ
+    # 5. Plot
     print("Generating plot...")
     plt.figure(figsize=(18, 14))
     
-    # Định nghĩa bảng màu với 18 màu hoàn toàn khác biệt
+    # Define a palette of 18 distinct colors
     distinct_colors = [
-        '#FF0000',  # Đỏ tươi
-        '#00FF00',  # Xanh lá neon
-        '#0000FF',  # Xanh dương thuần
-        '#FFD700',  # Vàng kim
-        '#FF1493',  # Hồng đậm
-        '#00CED1',  # Xanh ngọc
-        '#FF4500',  # Cam đỏ
-        '#9400D3',  # Tím đậm
-        '#32CD32',  # Xanh lá lime
-        '#FF69B4',  # Hồng nhạt
-        '#1E90FF',  # Xanh dodger
-        '#FFA500',  # Cam
-        '#8B008B',  # Tím magenta đậm
-        '#00FA9A',  # Xanh mint
-        '#DC143C',  # Đỏ crimson
-        '#4169E1',  # Xanh royal
-        '#FF8C00',  # Cam đậm
-        '#8A2BE2',  # Tím blue-violet
+        '#FF0000',  # Red
+        '#00FF00',  # Green
+        '#0000FF',  # Blue
+        '#FFD700',  # Gold
+        '#FF1493',  # Deep Pink
+        '#00CED1',  # Dark Turquoise
+        '#FF4500',  # Orange Red
+        '#9400D3',  # Dark Violet
+        '#32CD32',  # Lime Green
+        '#FF69B4',  # Hot Pink
+        '#1E90FF',  # Dodger Blue
+        '#FFA500',  # Orange
+        '#8B008B',  # Dark Magenta
+        '#00FA9A',  # Medium Spring Green
+        '#DC143C',  # Crimson
+        '#4169E1',  # Royal Blue
+        '#FF8C00',  # Dark Orange
+        '#8A2BE2',  # Blue Violet
     ]
     
     unique_labels = sorted(df['label'].unique())
@@ -125,33 +124,33 @@ def visualize_embedding_space(embedding_dir: str, universe_file: str, states_fil
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     
-    # Lưu hình ảnh
+    # Save image
     plt.savefig(output_image_file, bbox_inches='tight')
     print(f"Plot saved to '{output_image_file}'")
     plt.close()
 
 if __name__ == "__main__":
     import os
-    
-    # Xác định đường dẫn tương đối từ vị trí script
+
+    # Determine relative paths from the script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.join(script_dir, '..', 'output', 'embedding_space_base')
     pretrained_dir = os.path.join(script_dir, '..', 'output', 'embedding_space_pretrained')
-    
-    # Đường dẫn đến các file định nghĩa
+
+    # Paths to definition files
     UNIVERSE_FILE = os.path.join(script_dir, '..', '..', '..', 'vhas-demo', 'backend', 'vhas_universe.json')
     STATES_FILE = os.path.join(script_dir, '..', '..', 'clinical_states', 'clinical_states.json')
-    
+
     # Output images
     OUTPUT_DIR = os.path.join(script_dir, '..', 'output')
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    
+
     print("="*80)
-    print("GIAI ĐOẠN 1 - EVALUATION: t-SNE VISUALIZATION")
+    print("STAGE 1 - EVALUATION: t-SNE VISUALIZATION")
     print("="*80)
-    print("\n📊 Câu hỏi Định tính: Bản đồ có trông giống quy trình lâm sàng hợp lý không?\n")
-    
-    # Chạy cho "base" model (Model A)
+    print("\nQuestion: Does the embedding map reflect expected clinical workflow structure?\n")
+
+    # Run for the base model (Model A)
     print("\n🎨 Generating visualization for Model A...")
     visualize_embedding_space(
         embedding_dir=base_dir,
@@ -159,8 +158,8 @@ if __name__ == "__main__":
         states_file=STATES_FILE,
         output_image_file=os.path.join(OUTPUT_DIR, 'tsne_model_a_base.png')
     )
-    
-    # Chạy cho "pretrained" model (Model B)
+
+    # Run for the pretrained model (Model B)
     print("\n🎨 Generating visualization for Model B...")
     visualize_embedding_space(
         embedding_dir=pretrained_dir,
@@ -168,10 +167,10 @@ if __name__ == "__main__":
         states_file=STATES_FILE,
         output_image_file=os.path.join(OUTPUT_DIR, 'tsne_model_b_pretrained.png')
     )
-    
+
     print("\n" + "="*80)
     print("✅ VISUALIZATION COMPLETED")
     print("="*80)
-    print(f"\n📁 Images saved to: {OUTPUT_DIR}")
+    print(f"\nImages saved to: {OUTPUT_DIR}")
     print("   - tsne_model_a_base.png")
     print("   - tsne_model_b_pretrained.png")

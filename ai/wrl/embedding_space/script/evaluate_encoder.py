@@ -15,19 +15,19 @@ class EmbeddingEvaluator:
         self._load_data()
 
     def _load_data(self):
-        """Tải các file cần thiết từ embedding space và xác định actionable entities."""
+        """Load necessary files from the embedding space and identify actionable entities."""
         try:
             self.embeddings = np.load(os.path.join(self.embedding_dir, 'embeddings.npy'))
             with open(os.path.join(self.embedding_dir, 'id_to_name.json'), 'r') as f:
                 self.id_to_name = json.load(f)
-            # Tạo map ngược để tra cứu nhanh
+            # Build reverse lookup map for fast lookup
             self.name_to_id = {v: int(k) for k, v in self.id_to_name.items()}
-            
-            # Tải universe để xác định các actionable entities (chỉ Agents)
+
+            # Load universe to determine actionable entities (agents only)
             with open(self.universe_file, 'r', encoding='utf-8') as f:
                 universe = json.load(f)
-            
-            # Chỉ Agents là actionable - Tools không được trả về trực tiếp
+
+            # Only agents are considered actionable; tools are not returned directly
             self.actionable_entities = {agent['name'] for agent in universe.get('agents', [])}
             
         except FileNotFoundError as e:
@@ -35,8 +35,8 @@ class EmbeddingEvaluator:
 
     def find_nearest_neighbors(self, query_name: str, top_k: int = 5):
         """
-        Tìm k hành động (Agents) gần nhất cho một state.
-        LỌC để chỉ trả về actionable entities (Agents), loại bỏ States và Tools.
+        Find the top-k nearest actionable actions (agents) for a state.
+        Filter results to actionable entities (agents), excluding states and tools.
         """
         if query_name not in self.name_to_id:
             return [f"'{query_name}' not found in corpus."]
@@ -44,20 +44,20 @@ class EmbeddingEvaluator:
         query_id = self.name_to_id[query_name]
         query_vector = self.embeddings[query_id].reshape(1, -1)
         
-        # Tính cosine similarity với toàn bộ corpus
+        # Compute cosine similarity against the full corpus
         similarities = cosine_similarity(query_vector, self.embeddings)[0]
         
-        # --- BƯỚC LỌC: Chỉ xem xét các actionable entities (Agents) ---
+        # --- FILTER STEP: consider only actionable entities (agents) ---
         action_scores = []
         for i in range(len(self.id_to_name)):
             entity_name = self.id_to_name[str(i)]
             if entity_name in self.actionable_entities:
                 action_scores.append((similarities[i], i))
         
-        # Sắp xếp theo điểm số giảm dần
+        # Sort by score descending
         sorted_actions = sorted(action_scores, key=lambda x: x[0], reverse=True)
         
-        # Lấy top_k kết quả
+        # Get top-k actionable neighbors
         top_indices = [idx for score, idx in sorted_actions[:top_k]]
         
         neighbors = []
@@ -69,10 +69,10 @@ class EmbeddingEvaluator:
         return neighbors
 
 def run_evaluation(evaluator: EmbeddingEvaluator, query_set: list):
-    """Chạy đánh giá trên một bộ câu hỏi và in kết quả."""
+    """Run evaluation on a set of queries and print results."""
     print(f"\n--- Evaluating State → Action Mapping ---")
     for query in query_set:
-        # Hiển thị query rút gọn để dễ đọc
+        # Display shortened query for readability
         short_query = query.split(',')[0] if ',' in query else query[:80]
         print(f"\n📍 Query State: {short_query}...")
         print(f"   ↓ Suggested Actions (Agents):")
@@ -84,15 +84,15 @@ def run_evaluation(evaluator: EmbeddingEvaluator, query_set: list):
 if __name__ == "__main__":
     import os
     
-    # Xác định đường dẫn tương đối từ vị trí script
+    # Determine relative paths from script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
     base_dir = os.path.join(script_dir, '..', 'output', 'embedding_space_base')
     pretrained_dir = os.path.join(script_dir, '..', 'output', 'embedding_space_pretrained')
     
-    # Đường dẫn đến vhas_universe.json
+    # Path to vhas_universe.json
     UNIVERSE_FILE = os.path.join(script_dir, '..', '..', '..', 'vhas-demo', 'backend', 'vhas_universe.json')
     
-    # Bộ câu hỏi kiểm thử - CHỈ CLINICAL STATES (State → Action mapping)
+    # Test queries - CLINICAL STATES only (State → Action mapping)
     TEST_QUERIES = [
         "Patient state is Triage completed, priority is High, suspected Acute Coronary Syndrome.",
         "Patient state is Triage completed, priority is Low, suspected minor limb fracture.",
@@ -102,12 +102,12 @@ if __name__ == "__main__":
     ]
 
     print("="*80)
-    print("GIAI ĐOẠN 1 - EVALUATION: NEAREST NEIGHBORS ANALYSIS")
+    print("STAGE 1 - EVALUATION: NEAREST NEIGHBORS ANALYSIS")
     print("="*80)
-    print("\n📊 Câu hỏi Định lượng: Từ State này, những Agent nào là lựa chọn hợp lý?")
-    print("   (Chỉ đánh giá State → Action mapping, loại bỏ State noise)\n")
+    print("\nQuestion: From this state, which agents are reasonable choices?")
+    print("   (Evaluating State → Action mapping only, excluding state noise)\n")
     
-    # Chạy cho "base" model (Model A)
+    # Run for the base model (Model A)
     try:
         evaluator_base = EmbeddingEvaluator(base_dir, UNIVERSE_FILE)
         print("\n" + "="*80)
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     except IOError as e:
         print(f"❌ ERROR: {e}")
         
-    # Chạy cho "pretrained" model (Model B)
+    # Run for the pretrained model (Model B)
     try:
         evaluator_pretrained = EmbeddingEvaluator(pretrained_dir, UNIVERSE_FILE)
         print("\n" + "="*80)
@@ -130,7 +130,7 @@ if __name__ == "__main__":
     print("\n" + "="*80)
     print("✅ EVALUATION COMPLETED")
     print("="*80)
-    print("\n💡 Insights:")
-    print("   - Nearest neighbors chỉ bao gồm Agents (actionable entities)")
-    print("   - States và Tools đã được lọc ra khỏi kết quả")
-    print("   - Điều này phản ánh đúng nhiệm vụ State → Action của Orchestrator")
+    print("\nInsights:")
+    print("   - Nearest neighbors include only agents (actionable entities)")
+    print("   - States and tools are filtered out from results")
+    print("   - This reflects the State → Action task for the Orchestrator")

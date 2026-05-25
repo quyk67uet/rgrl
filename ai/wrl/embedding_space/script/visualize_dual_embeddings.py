@@ -295,9 +295,7 @@ def visualize_single_space(embeddings, labels, title, output_file, figsize=(18, 
 
 @app.local_entrypoint()
 def main():
-    """
-    Local entrypoint - chạy visualization cho cả 2 models
-    """
+    """Local entrypoint - run visualizations for both models."""
     print("\n" + "="*80)
     print("DUAL-ENCODER VISUALIZATION: t-SNE EMBEDDING SPACES")
     print("="*80)

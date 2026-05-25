@@ -1,28 +1,27 @@
 # scripts/run_finetuning_jobs_dual_corrected.py
-"""
-CORRECTED: Dual-Encoder fine-tuning with aligned artifact paths.
+"""Corrected dual-encoder fine-tuning with aligned artifact paths.
 
-KIẾN TRÚC:
+Architecture:
 - ActionEncoder: Base → Pre-train (ADP+T1) → Fine-tune (Clinical)
-- StateEncoder: Base → Fine-tune (Clinical) - SKIP pre-training
+- StateEncoder: Base → Fine-tune (Clinical) — skip pre-training
 
-LÝ DO:
-- ADP+T1 chỉ có (Action, Action) pairs → chỉ phù hợp cho ActionEncoder
-- StateEncoder cần học từ Clinical States → chỉ có trong fine-tuning data
+Rationale:
+- ADP+T1 contains only (Action, Action) pairs — suitable for ActionEncoder only
+- StateEncoder requires clinical-state examples, which are available in the fine-tuning dataset
 
-WORKFLOW:
+Workflow:
 1. Upload finetuning data:
-   modal volume put vhas-training-data data/wrl_finetuning_examples.json /finetuning/wrl_finetuning_examples.json
-   (Clinical states already included in wrl_finetuning_examples.json - no need to upload separately)
+    modal volume put vhas-training-data data/wrl_finetuning_examples.json /finetuning/wrl_finetuning_examples.json
+    (Clinical states are already included in the uploaded file)
 
 2. Run both jobs:
-   modal run run_finetuning_jobs_dual_corrected.py
+    modal run run_finetuning_jobs_dual_corrected.py
 
 3. Download models:
-    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/state_encoder ../output/model_a_finetune_only/state_encoder
-    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/action_encoder ../output/model_a_finetune_only/action_encoder
-    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/state_encoder ../output/model_b_pretrained/state_encoder
-    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/action_encoder ../output/model_b_pretrained/action_encoder
+     modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/state_encoder ../output/model_a_finetune_only/state_encoder
+     modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/action_encoder ../output/model_a_finetune_only/action_encoder
+     modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/state_encoder ../output/model_b_pretrained/state_encoder
+     modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/action_encoder ../output/model_b_pretrained/action_encoder
 """
 import os
 from pathlib import Path
@@ -43,7 +42,7 @@ def _resolve_stage1_output_root() -> Path:
 
 STAGE1_OUTPUT_ROOT = _resolve_stage1_output_root()
 
-# --- 1. Định nghĩa Môi trường ---
+# --- 1. Define environment ---
 app = modal.App("vhas-dual-encoder-finetuning-corrected")
 
 image = (
@@ -58,12 +57,12 @@ image = (
     )
 )
 
-# --- 2. Định nghĩa Volumes ---
+# --- 2. Define Volumes ---
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=True)
 pretrained_model_vol = modal.Volume.from_name("vhas-encoder-output", create_if_missing=True)
 output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=True)
 
-# --- 3. Model A: Fine-tune từ Base Model (Chuyên khoa) ---
+# --- 3. Model A: Fine-tune from Base Model (Domain-specific) ---
 @app.function(
     image=image,
     gpu="T4",
@@ -79,12 +78,11 @@ def finetune_model_a_dual_corrected(
     num_epochs: int = 3,
     finetuning_data_path: str = DEFAULT_FINETUNING_DATA_PATH,
 ):
-    """
-    Model A (Chuyên khoa): 
+    """Model A (Domain-specific):
     - StateEncoder: Base → Fine-tune (State-Action pairs only)
     - ActionEncoder: Base → Fine-tune (State-Action pairs)
-    
-    NOTE: Clinical states already included in wrl_finetuning_examples.json
+
+    NOTE: Clinical states are included in wrl_finetuning_examples.json
     """
     import json
     import torch
@@ -229,7 +227,7 @@ def finetune_model_a_dual_corrected(
     return {"status": "success", "model": "A", "state_path": state_output_path, "action_path": action_output_path}
 
 
-# --- 4. Model B: Fine-tune từ Pre-trained Model (Toàn diện) ---
+# --- 4. Model B: Fine-tune from Pre-trained Model (Comprehensive) ---
 @app.function(
     image=image,
     gpu="T4",
@@ -247,12 +245,11 @@ def finetune_model_b_dual_corrected(
     finetuning_data_path: str = DEFAULT_FINETUNING_DATA_PATH,
     pretrained_action_path: str = "/pretrained/pretrained_encoder"  # Only ActionEncoder has pre-training
 ):
-    """
-    Model B (Toàn diện):
+    """Model B (Comprehensive):
     - StateEncoder: Base → Fine-tune (State-Action pairs only)
     - ActionEncoder: Base → Pre-train (ADP+T1) → Fine-tune (Clinical)
-    
-    NOTE: Clinical states already included in wrl_finetuning_examples.json
+
+    NOTE: Clinical states are included in wrl_finetuning_examples.json
     """
     import json
     import torch
@@ -406,50 +403,48 @@ def finetune_model_b_dual_corrected(
 
 @app.local_entrypoint()
 def main():
-    """
-    Chạy cả 2 fine-tuning jobs song song.
-    """
+    """Run both fine-tuning jobs in parallel (corrected workflow)."""
     print("=" * 70)
     print("🚀 VHAS Dual-Encoder Fine-tuning: CORRECTED VERSION")
     print("=" * 70)
-    print("\n📊 Two Models:")
-    print("   • Model A (Chuyên khoa):")
+    print("\nTwo Models:")
+    print("   • Model A (Domain-specific):")
     print("     - StateEncoder: Base → Fine-tune (Clinical)")
     print("     - ActionEncoder: Base → Fine-tune (Clinical)")
-    print("\n   • Model B (Toàn diện):")
+    print("\n   • Model B (Comprehensive):")
     print("     - StateEncoder: Base → Fine-tune (Clinical)")
     print("     - ActionEncoder: Base → Pre-train (ADP+T1) → Fine-tune (Clinical)")
-    
-    print("\n⚠️  Make sure data is uploaded:")
+
+    print("\nEnsure data is uploaded:")
     print("   modal volume put vhas-training-data data/wrl_finetuning_examples.json /finetuning/wrl_finetuning_examples.json")
-    print("   (Clinical states already included in wrl_finetuning_examples.json)")
-    
-    print("\n🌐 Submitting both jobs to Modal in parallel...\n")
-    
+    print("   (Clinical states are included in the uploaded file)")
+
+    print("\nSubmitting both jobs to Modal in parallel...\n")
+
     # Launch both jobs in parallel
     job_a = finetune_model_a_dual_corrected.spawn()
     job_b = finetune_model_b_dual_corrected.spawn()
-    
-    print("✅ Both jobs submitted!")
+
+    print("Jobs submitted:")
     print("   • Model A is running...")
     print("   • Model B is running...")
-    
+
     # Wait for results
     result_a = job_a.get()
     result_b = job_b.get()
-    
+
     print("\n" + "=" * 70)
     print("✅ All Fine-tuning Complete!")
     print("=" * 70)
-    print(f"\n📊 Results:")
+    print(f"\nResults:")
     print(f"   Model A:")
     print(f"     - StateEncoder: {result_a['state_path']}")
     print(f"     - ActionEncoder: {result_a['action_path']}")
     print(f"   Model B:")
     print(f"     - StateEncoder: {result_b['state_path']}")
     print(f"     - ActionEncoder: {result_b['action_path']}")
-    
-    print(f"\n💾 Download models:")
+
+    print(f"\nDownload models:")
     print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/state_encoder ../output/model_a_finetune_only/state_encoder")
     print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/action_encoder ../output/model_a_finetune_only/action_encoder")
     print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/state_encoder ../output/model_b_pretrained/state_encoder")

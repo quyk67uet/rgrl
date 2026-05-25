@@ -1,34 +1,33 @@
 # scripts/train_on_modal_dual.py
-"""
-Script để training DUAL ENCODER (Two-Tower) trên Modal với GPU.
+"""Script to train a Dual-Encoder (Two-Tower) on Modal with GPU.
 
-KIẾN TRÚC:
-- StateEncoder: Chuyên mã hóa Clinical States
-- ActionEncoder: Chuyên mã hóa Agents và Tools
+Architecture:
+- StateEncoder: specialized for Clinical States
+- ActionEncoder: specialized for Agents and Tools
 
-TRAINING:
-- Sử dụng Contrastive Learning với cặp (State, Action)
-- Maximize cosine similarity giữa state_embedding và action_embedding
+Training:
+- Contrastive learning on (State, Action) pairs
+- Maximize cosine similarity between state and action embeddings
 - Loss: MultipleNegativesRankingLoss
 
-WORKFLOW:
-1. Upload data (one-time): 
-   modal volume put vhas-training-data data/wrl_pretraining_examples.json /data/wrl_pretraining_examples.json
+Workflow:
+1. Upload data (one-time):
+    modal volume put vhas-training-data data/wrl_pretraining_examples.json /data/wrl_pretraining_examples.json
 
 2. Train:
-   modal run train_on_modal_dual.py
+    modal run train_on_modal_dual.py
 
 3. Download models:
-   modal volume get vhas-encoder-output pretrained_state_encoder ../output/pretrained_state_encoder
-   modal volume get vhas-encoder-output pretrained_action_encoder ../output/pretrained_action_encoder
+    modal volume get vhas-encoder-output pretrained_state_encoder ../output/pretrained_state_encoder
+    modal volume get vhas-encoder-output pretrained_action_encoder ../output/pretrained_action_encoder
 """
 import modal
 import os
 
-# --- 1. Định nghĩa Môi trường (Environment) ---
+# --- 1. Define environment ---
 app = modal.App("vhas-dual-encoder-pretraining")
 
-# Xây dựng image với đầy đủ dependencies
+# Build image with required dependencies
 image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -41,7 +40,7 @@ image = (
     )
 )
 
-# --- 2. Định nghĩa Volume để lưu trữ persistent ---
+# --- 2. Define persistent Volumes ---
 data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=True)
 output_vol = modal.Volume.from_name("vhas-encoder-output", create_if_missing=True)
 
@@ -61,18 +60,17 @@ def train_dual_encoder_on_modal(
     num_epochs: int = 1,
     data_path: str = "/data/wrl_pretraining_examples.json"
 ):
-    """
-    Hàm training Dual Encoder trên Modal GPU.
-    
+    """Train Dual Encoder on Modal GPU.
+
     Training Strategy:
-    - Load base model 'all-mpnet-base-v2' làm checkpoint chung
-    - Clone thành 2 models: StateEncoder và ActionEncoder
-    - Training với Contrastive Loss trên cặp (State, Action)
-    
+    - Load base model 'all-mpnet-base-v2' as shared checkpoint
+    - Clone into two models: StateEncoder and ActionEncoder
+    - Train using contrastive loss on (State, Action) pairs
+
     Args:
-        batch_size: Batch size cho training
-        num_epochs: Số epochs
-        data_path: Đường dẫn đến file training data trong volume
+        batch_size: training batch size
+        num_epochs: number of epochs
+        data_path: path to training data inside the volume
     """
     import json
     import torch
@@ -113,7 +111,7 @@ def train_dual_encoder_on_modal(
     print(f"   ✓ ActionEncoder loaded: {action_encoder.get_sentence_embedding_dimension()} dims")
     
     # Setup training with Dual-Encoder architecture
-    # We'll use a custom training loop to handle two encoders
+    # We'll use SentenceTransformers' fit() for each encoder (state first, action second)
     train_dataloader = DataLoader(
         training_examples,
         shuffle=True,
@@ -121,8 +119,8 @@ def train_dual_encoder_on_modal(
         pin_memory=(device == "cuda")
     )
     
-    # Use MultipleNegativesRankingLoss - it naturally supports dual-encoder
-    # by treating first text as query (State) and second as document (Action)
+    # Use MultipleNegativesRankingLoss - it treats first text as query (State)
+    # and second text as document (Action)
     train_loss = losses.MultipleNegativesRankingLoss(model=state_encoder)
     
     warmup_steps = int(len(train_dataloader) * num_epochs * 0.1)
@@ -186,8 +184,7 @@ def train_dual_encoder_on_modal(
         checkpoint_save_total_limit=3
     )
     
-    # For ActionEncoder, we need to swap the texts in examples
-    # So that Actions become the anchor
+    # For ActionEncoder, swap the texts so Actions become the anchor
     print("\n" + "=" * 70)
     print("🏋️  Training ActionEncoder...")
     print("=" * 70 + "\n")
@@ -214,7 +211,7 @@ def train_dual_encoder_on_modal(
         checkpoint_save_total_limit=3
     )
     
-    # Commit volume
+    # Commit volume to persist trained models
     output_vol.commit()
     
     print("\n" + "=" * 70)
@@ -238,12 +235,11 @@ def main(
     batch_size: int = 128,
     epochs: int = 1
 ):
-    """
-    Entry point để chạy dual-encoder training job.
-    
+    """Entry point to run the dual-encoder training job.
+
     Args:
-        batch_size: Batch size cho training
-        epochs: Số epochs
+        batch_size: training batch size
+        epochs: number of epochs
     """
     remote_data_path = "/data/data/wrl_pretraining_examples.json"
     
@@ -257,13 +253,13 @@ def main(
     print(f"   • Epochs: {epochs}")
     print(f"   • GPU: T4")
     
-    print(f"\n⚠️  Make sure data is uploaded to volume!")
+    print(f"\n⚠️  Make sure data is uploaded to the volume!")
     print(f"   If not, run:")
     print(f"   modal volume put vhas-training-data <local_file> {remote_data_path}")
     
     print(f"\n🌐 Submitting training job to Modal...\n")
-    
-    # Chạy training
+
+    # Run training
     result = train_dual_encoder_on_modal.remote(
         batch_size=batch_size,
         num_epochs=epochs,
