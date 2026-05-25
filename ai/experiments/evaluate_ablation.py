@@ -14,6 +14,9 @@ import csv
 from pathlib import Path
 from typing import Any, Literal
 
+import matplotlib.pyplot as plt
+import numpy as np
+
 from ai.dual_system.deliberative_llm import run_deliberative_pipeline
 from ai.dual_system.neuro_symbolic_router import orchestrate_workflow_step
 from ai.experiments.evaluate_tradeoff import load_test_traces
@@ -21,8 +24,21 @@ from ai.experiments.evaluate_tradeoff import load_test_traces
 AblationMode = Literal["gnn_only", "single_llm", "proposed_3agent"]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-OUTPUT_CSV_PATH = REPO_ROOT / "ai" / "results" / "real_ablation_results.csv"
+OUTPUT_CSV_PATH = REPO_ROOT / "ai" / "results" / "system2_ablation_results.csv"
 EXPECTED_TEST_SIZE = 200
+
+plt.style.use("seaborn-v0_8-whitegrid")
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "axes.labelsize": 13,
+        "axes.titlesize": 15,
+        "legend.fontsize": 12,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "figure.titleweight": "bold",
+    }
+)
 
 _ALLOWED_SKELETONS: set[tuple[str, ...]] = {
     ("TriageAgent", "EHRAgent", "SummaryAgent"),
@@ -281,6 +297,96 @@ def save_ablation_results(rows: list[dict[str, float | int | str]], output_path:
     return output_path
 
 
+def plot_ablation_study(
+    rows: list[dict[str, float | int | str]],
+    output_path: Path | None = None,
+) -> Path:
+    """Plot the ablation study results and save the figure."""
+    final_output_path = (
+        output_path
+        or Path(__file__).parent.parent / "results" / "figures" / "exp2_ablation_study.png"
+    )
+    final_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    x_labels = [
+        "Sys 1 Only\n(Forced GNN)",
+        "Sys 1 + Single LLM\n(Generator Only)",
+        "Sys 1 + 3-Agent Pipeline\n(Proposed)",
+    ]
+
+    mode_order = ["gnn_only", "single_llm", "proposed_3agent"]
+    row_map = {str(row["mode"]): row for row in rows}
+
+    compliance_rates = [float(row_map[mode]["compliance_rate"]) for mode in mode_order]
+    hallucination_rates = [float(row_map[mode]["hallucination_rate"]) for mode in mode_order]
+
+    x = np.arange(len(x_labels))
+    width = 0.35
+
+    fig, ax1 = plt.subplots(figsize=(11, 6))
+
+    rects1 = ax1.bar(
+        x - width / 2,
+        compliance_rates,
+        width,
+        label="Guideline Compliance Rate (%)",
+        color="#2ca02c",
+        alpha=0.8,
+    )
+    ax1.set_ylabel("Guideline Compliance Rate (%)", color="#2ca02c", fontweight="bold")
+    ax1.tick_params(axis="y", labelcolor="#2ca02c")
+    ax1.set_ylim(min(80, min(compliance_rates) - 2), 100)
+    ax1.set_axisbelow(True)
+    ax1.grid(axis="y", linestyle="--", linewidth=0.8, alpha=0.55)
+    ax1.grid(axis="x", visible=False)
+
+    ax2 = ax1.twinx()
+    rects2 = ax2.bar(
+        x + width / 2,
+        hallucination_rates,
+        width,
+        label="Critical Violation Rate (%)",
+        color="#d62728",
+        alpha=0.8,
+    )
+    ax2.set_ylabel("Critical Violation Rate (%)", color="#d62728", fontweight="bold")
+    ax2.tick_params(axis="y", labelcolor="#d62728")
+    ax2.set_ylim(0, max(15, max(hallucination_rates) + 2))
+    ax2.grid(False)
+
+    def autolabel(rects, ax):
+        for rect in rects:
+            height = rect.get_height()
+            ax.annotate(
+                f"{height:.1f}%",
+                xy=(rect.get_x() + rect.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=11,
+                fontweight="bold",
+            )
+
+    autolabel(rects1, ax1)
+    autolabel(rects2, ax2)
+
+    ax1.set_xticks(x)
+    ax1.set_xticklabels(x_labels, fontsize=12)
+    ax1.set_title(r"Ablation Study of System 2 Architectures (at $\tau = 0.85$)", pad=20)
+
+    lines_labels = [ax.get_legend_handles_labels() for ax in [ax1, ax2]]
+    lines, legend_labels = [sum(lol, []) for lol in zip(*lines_labels)]
+    fig.legend(lines, legend_labels, loc="upper center", bbox_to_anchor=(0.5, 0.995), ncol=2, frameon=True)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.88])
+    fig.savefig(final_output_path, dpi=300)
+    plt.close(fig)
+
+    print(f"[ablation] Saved ablation figure to: {final_output_path}", flush=True)
+    return final_output_path
+
+
 def main() -> None:
     """CLI entrypoint for real ablation experiment on the test split."""
     test_traces = load_test_traces()
@@ -293,7 +399,13 @@ def main() -> None:
     )
 
     rows = asyncio.run(run_all_modes(test_traces))
+    print(f"[ablation] Saving CSV to: {OUTPUT_CSV_PATH}", flush=True)
     save_ablation_results(rows, OUTPUT_CSV_PATH)
+    print(
+        f"[ablation] Saving figure to: {Path(__file__).parent.parent / 'results' / 'figures' / 'exp2_ablation_study.png'}",
+        flush=True,
+    )
+    plot_ablation_study(rows)
 
     print("guideline compliance metrics")
     print("mode,n_cases,compliance_rate,hallucination_rate,redundancy_rate,average_steps")

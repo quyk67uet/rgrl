@@ -1,22 +1,22 @@
 # train_transformer_deployed.py
 """
-Training VHAS Orchestrator với Transformer Policy + Guidance
-DEPLOYED MODE - chạy background không bị cancel khi tắt máy.
+Training VHAS Orchestrator with Transformer Policy + Guidance.
+DEPLOYED MODE - runs in the background and keeps going if the machine shuts down.
 
 USAGE:
-   # Test với 2048 steps
+    # Test with 2048 steps
    modal run --detach train_transformer_deployed.py::start_training --total-timesteps 2048
    
-   # Full training 1M steps
+    # Full training with 1M steps
    modal run --detach train_transformer_deployed.py::start_training --total-timesteps 1000000
 
-   Sau khi chạy lệnh trên, BẠN CÓ THỂ TẮT MÁY NGAY.
-   Training sẽ chạy trên Modal cloud.
+    After running the command above, you can close the machine right away.
+    Training runs on Modal cloud.
 
-Kiểm tra logs:
+Check logs:
    modal app logs vhas-orchestrator-transformer --follow
 
-Download kết quả:
+Download results:
    modal volume ls vhas-training-results
    modal volume get vhas-training-results transformer_<TIMESTAMP>/ ./results_transformer/
 """
@@ -26,7 +26,7 @@ from datetime import datetime
 
 app = modal.App("vhas-orchestrator-transformer")
 
-# Image với SB3, PyTorch và dependencies
+# Image with SB3, PyTorch, and dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -41,7 +41,7 @@ image = (
     )
 )
 
-# Volumes - mount data và models
+# Volumes - mount data and models
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
@@ -49,9 +49,9 @@ training_results_vol = modal.Volume.from_name("vhas-training-results", create_if
 
 @app.function(
     image=image,
-    gpu="A10G",  # Transformer benefits from GPU
-    memory=16384,  # 16GB RAM for Transformer
-    timeout=14400,  # 4 hours for 1M timesteps
+    gpu="A10G",  # Transformer benefits from GPU.
+    memory=16384,  # 16GB RAM for Transformer.
+    timeout=14400,  # 4 hours for 1M timesteps.
     volumes={
         "/data": training_data_vol,
         "/models": finetuned_output_vol,
@@ -59,16 +59,16 @@ training_results_vol = modal.Volume.from_name("vhas-training-results", create_if
     }
 )
 def train_transformer(
-    total_timesteps: int = 2048,  # Default: test với 2048 steps
+    total_timesteps: int = 2048,  # Default: test with 2048 steps.
     top_k_guidance: int = 5,
     run_id: str = None
 ):
     """
-    Train orchestrator với Transformer Policy.
-    Chạy trong background, không bị cancel khi client disconnect.
+    Train the orchestrator with a Transformer policy.
+    Runs in the background and keeps going if the client disconnects.
     """
     import sys
-    sys.path.insert(0, '/data/data/gro/transformer')  # Correct path: volume root is /, so mounted at /data becomes /data/data/gro/transformer
+    sys.path.insert(0, '/data/data/gro/transformer')  # Volume root is /, so the mount lands at /data/data/gro/transformer.
     
     from train_orchestrator_sb3 import train_orchestrator_baseline
     
@@ -83,19 +83,19 @@ def train_transformer(
     print(f"🌙 DEPLOYED MODE: Training will continue even if you disconnect")
     print("=" * 80)
     
-    # Set paths
-    encoder_path = "/models/model_a"  # Use finetuned encoder
+    # Set paths.
+    encoder_path = "/models/model_a"  # Use the finetuned encoder.
     embedding_space_path = "/models/embedding_space_base_no_states"
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
     
-    # Create unique output folder with timestamp if run_id provided
+    # Create a unique output folder when run_id is provided.
     if run_id:
         output_dir = f"/results/transformer_{run_id}"
     else:
         output_dir = "/results/transformer"
     
-    # Train
+    # Train.
     try:
         model, stats = train_orchestrator_baseline(
             encoder_path=encoder_path,
@@ -108,7 +108,7 @@ def train_transformer(
             device="cuda"  # Use GPU
         )
         
-        # Commit results
+        # Commit results.
         training_results_vol.commit()
         
         print("\n" + "=" * 80)
@@ -118,7 +118,7 @@ def train_transformer(
         print(f"  Total timesteps: {stats['total_timesteps']:,}")
         print(f"  Episodes: {stats['episode_count']}")
         
-        # Format với kiểm tra kiểu
+        # Format with type checks.
         avg_reward = stats.get('final_avg_reward')
         if isinstance(avg_reward, (int, float)):
             print(f"  Final avg reward (last 100): {avg_reward:.2f}")
@@ -156,15 +156,15 @@ def train_transformer(
     timeout=18000  # 5 hours
 )
 def start_training(
-    total_timesteps: int = 2048,  # Default: test với 2048 steps
+    total_timesteps: int = 2048,  # Default: test with 2048 steps.
     top_k_guidance: int = 5,
     add_timestamp: bool = True
 ):
     """
-    Function để trigger training cho Transformer Policy.
-    Có thể tắt máy sau khi gọi function này.
+    Function to trigger Transformer policy training.
+    You can shut down the machine after calling it.
     """
-    # Generate run ID if timestamp requested
+    # Generate a run ID if timestamping is enabled.
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") if add_timestamp else None
     
     print("=" * 80)
@@ -186,7 +186,7 @@ def start_training(
     
     print(f"\n🌙 BACKGROUND MODE:")
     print(f"   • Training will continue even if you disconnect")
-    print(f"   • You can safely close terminal or shutdown computer")
+    print(f"   • You can safely close the terminal or shut down the computer")
     print(f"   • Check progress later with: modal app logs vhas-orchestrator-transformer")
     
     print(f"\n🚀 Starting training...\n")
@@ -208,7 +208,7 @@ def start_training(
         print(f"   Total timesteps: {stats['total_timesteps']:,}")
         print(f"   Episodes: {stats['episode_count']}")
         
-        # Format với kiểm tra kiểu
+        # Format with type checks.
         avg_reward = stats.get('final_avg_reward', 0)
         if isinstance(avg_reward, (int, float)):
             print(f"   Final avg reward: {avg_reward:.2f}")
@@ -229,7 +229,7 @@ def start_training(
     else:
         print(f"\n❌ Training failed: {result.get('error', 'Unknown')}")
     
-    print(f"\n💾 Download trained model:")
+    print(f"\n💾 Download the trained model:")
     print(f"   modal volume get vhas-training-results {result.get('output_dir', '').replace('/results/', '')} ./results_transformer/")
     
     return result

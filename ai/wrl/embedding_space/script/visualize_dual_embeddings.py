@@ -26,6 +26,7 @@ Download với:
 
 import json
 import os
+from pathlib import Path
 import numpy as np
 from sklearn.manifold import TSNE
 import matplotlib
@@ -177,6 +178,27 @@ def visualize_dual_encoder_model(
         output_file=f"/data/tsne_{output_prefix}_combined.png",
         figsize=(20, 16)
     )
+
+    # Save combined 2D coordinates + labels to CSV for downstream plotting/analysis.
+    try:
+        # Compute a lightweight t-SNE again but deterministic to export coordinates
+        tsne = TSNE(n_components=2, perplexity=min(30, combined_embeddings.shape[0] - 1), random_state=42, max_iter=1000)
+        emb2d = tsne.fit_transform(combined_embeddings)
+        import pandas as pd
+        df = pd.DataFrame({
+            'x': emb2d[:, 0],
+            'y': emb2d[:, 1],
+            'label': combined_labels,
+            'model': model_name,
+        })
+
+        # Prefer writing into container volume path (/data) when running on Modal, else write to repo results
+        out_csv = Path('/data') / f"tsne_{output_prefix}_combined.csv" if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / f"tsne_{output_prefix}_combined.csv"
+        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(out_csv, index=False, encoding='utf-8')
+        print(f"   ✓ TSNE coords saved to {out_csv}")
+    except Exception as exc:
+        print(f"   ⚠️  Failed to save TSNE CSV: {exc}")
     
     print(f"\n✅ Visualizations saved:")
     print(f"   - /data/tsne_{output_prefix}_action_space.png")
