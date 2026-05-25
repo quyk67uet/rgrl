@@ -1,83 +1,241 @@
-# scripts/visualize_embeddings.py
+"""
+Visualization script for the dual-encoder architecture.
+======================================================
+
+This script visualizes both embedding spaces produced by the dual encoder:
+- Semantic State embedding space (from StateEncoder)
+- Action embedding space (from ActionEncoder)
+
+It uses t-SNE to reduce embeddings from 768D to 2D and renders the plots.
+
+WORKFLOW:
+1. Run directly on Modal (no local embedding download needed)
+    $ modal run visualize_embeddings.py
+
+OUTPUT:
+- tsne_model_a_dual_state_space.png: Semantic State space for Model A
+- tsne_model_a_dual_action_space.png: Action space for Model A
+- tsne_model_b_dual_state_space.png: Semantic State space for Model B
+- tsne_model_b_dual_action_space.png: Action space for Model B
+- tsne_visualization.png: Combined view (Semantic State + Action)
+- tsne_embeddings_2d.csv: Consolidated 2D coordinates for both models
+
+Download with:
+    modal volume get vhas-finetuned-output tsne_*.png ./results/
+"""
+
 import json
 import os
+from pathlib import Path
 import numpy as np
 from sklearn.manifold import TSNE
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend for Modal
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
+import modal
 
-def create_labels(id_to_name: dict, universe_file: str, states_file: str) -> list:
-    """Create detailed labels for each entity in the corpus with sensible grouping."""
+# Define Modal App and image
+app = modal.App("vhas-visualize-dual-embeddings")
+
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install([
+        "numpy>=1.24.0",
+        "scikit-learn>=1.3.0",
+        "matplotlib>=3.7.0",
+        "seaborn>=0.12.0",
+        "pandas>=2.0.0",
+    ])
+)
+
+# Connect Modal volumes
+finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
+training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
+
+
+@app.function(
+    image=image,
+    timeout=1800,
+    volumes={
+        "/data": finetuned_output_vol,
+        "/definitions": training_data_vol,
+    },
+)
+def visualize_dual_encoder_model(
+    embedding_space_dir: str,
+    model_name: str,
+    universe_file: str,
+    output_prefix: str
+):
+    """
+    Visualize Dual-Encoder embedding spaces.
     
-    # Load definitions to determine which agent owns each tool
-    with open(universe_file, 'r', encoding='utf-8') as f:
-        universe = json.load(f)
-    tool_to_owner = {tool['name']: tool['owner'] for tool in universe.get('tools', [])}
-    agent_names = {agent['name'] for agent in universe.get('agents', [])}
-
-    labels = []
-    for i in range(len(id_to_name)):
-        name = id_to_name[str(i)]
-        if name in agent_names:
-            # Each agent gets its own label
-            labels.append(f"Agent: {name}")
-        elif name in tool_to_owner:
-            # Each tool gets its own label with owner
-            owner = tool_to_owner[name]
-            labels.append(f"Tool: {name} ({owner})")
-        else:  # Clinical state - group by workflow phase
-            # Classify states by workflow phase
-            if "Initial State" in name:
-                labels.append("State: Initial Arrival")
-            elif "Triage completed" in name:
-                labels.append("State: Triage Phase")
-            elif "Initial vitals assessed" in name:
-                labels.append("State: Initial Assessment")
-            elif "Initial medication dispensed" in name:
-                labels.append("State: Initial Treatment")
-            elif "Post-intervention vitals" in name:
-                labels.append("State: Post-Treatment")
-            elif "Full medication reconciled" in name:
-                labels.append("State: Medication Review")
-            elif "Final summary ready" in name:
-                labels.append("State: Discharge Phase")
-            else:
-                labels.append("State: Other")
-    return labels
-
-def visualize_embedding_space(embedding_dir: str, universe_file: str, states_file: str, output_image_file: str):
-    """Load embedding space and visualize it with t-SNE."""
-    print(f"\n--- Visualizing embedding space from: {embedding_dir} ---")
-
-    # 1. Load data
+    Args:
+        embedding_space_dir: Path to dual embedding space directory
+        model_name: Name of model (e.g., "Model A", "Model B")
+        universe_file: Path to vhas_universe.json
+        output_prefix: Prefix for output files (e.g., "model_a_dual")
+    """
+    print("\n" + "="*80)
+    print(f"VISUALIZING {model_name}")
+    print("="*80)
+    
+    # 1. Load embeddings and metadata
+    print(f"\n📥 Loading embeddings from {embedding_space_dir}...")
     try:
-        embeddings = np.load(os.path.join(embedding_dir, 'embeddings.npy'))
-        with open(os.path.join(embedding_dir, 'id_to_name.json'), 'r') as f:
-            id_to_name = json.load(f)
-    except FileNotFoundError:
-        print(f"ERROR: Embedding files not found in {embedding_dir}. Skipping.")
+        state_embeddings = np.load(os.path.join(embedding_space_dir, 'state_embeddings.npy'))
+        action_embeddings = np.load(os.path.join(embedding_space_dir, 'action_embeddings.npy'))
+        
+        with open(os.path.join(embedding_space_dir, 'state_id_to_name.json'), 'r') as f:
+            state_id_to_name = json.load(f)
+        
+        with open(os.path.join(embedding_space_dir, 'action_id_to_name.json'), 'r') as f:
+            action_id_to_name = json.load(f)
+        
+        with open(os.path.join(embedding_space_dir, 'owner_map.json'), 'r') as f:
+            owner_map = json.load(f)
+        
+        print(f"   ✓ State embeddings: {state_embeddings.shape}")
+        print(f"   ✓ Action embeddings: {action_embeddings.shape}")
+    except FileNotFoundError as e:
+        print(f"   ❌ ERROR: {e}")
         return
-    # 2. Create labels
-    labels = create_labels(id_to_name, universe_file, states_file)
     
-    # 3. Run t-SNE
-    print("Running t-SNE... (This can take a minute)")
-    tsne = TSNE(n_components=2, perplexity=min(30, len(embeddings)-1), random_state=42, max_iter=1000)
-    embeddings_2d = tsne.fit_transform(embeddings)
+    # 2. Load universe
+    print(f"\n📋 Loading universe from {universe_file}...")
+    try:
+        with open(universe_file, 'r', encoding='utf-8') as f:
+            universe = json.load(f)
+        
+        agent_names = {agent['name'] for agent in universe.get('agents', [])}
+        print(f"   ✓ Agents: {len(agent_names)}")
+    except FileNotFoundError as e:
+        print(f"   ❌ ERROR: {e}")
+        return
+    
+    # 3. Create labels for actions
+    action_labels = []
+    for i in range(len(action_id_to_name)):
+        name = action_id_to_name[str(i)]
+        if name in agent_names:
+            action_labels.append(f"Agent: {name}")
+        elif name in owner_map:
+            owner = owner_map[name]
+            action_labels.append(f"Tool: {name} ({owner})")
+        else:
+            action_labels.append(f"Unknown: {name}")
+    
+    # 4. Create labels for states (group by operational phase)
+    state_labels = []
+    for i in range(len(state_id_to_name)):
+        state_text = state_id_to_name[str(i)]
+        if "Initial State" in state_text:
+            state_labels.append("Semantic State: Initial Arrival")
+        elif "Triage completed" in state_text:
+            state_labels.append("Semantic State: Triage Phase")
+        elif "Initial vitals assessed" in state_text:
+            state_labels.append("Semantic State: Initial Assessment")
+        elif "Initial medication dispensed" in state_text:
+            state_labels.append("Semantic State: Initial Treatment")
+        elif "Post-intervention vitals" in state_text:
+            state_labels.append("Semantic State: Post-Treatment")
+        elif "Full medication reconciled" in state_text:
+            state_labels.append("Semantic State: Medication Review")
+        elif "Final summary ready" in state_text:
+            state_labels.append("Semantic State: Discharge Phase")
+        else:
+            state_labels.append("Semantic State: Other")
+    
+    # 5. Visualize action space
+    print("\n🎨 Generating t-SNE visualization for Action Space...")
+    visualize_single_space(
+        embeddings=action_embeddings,
+        labels=action_labels,
+        title=f"Action Embedding Space - {model_name}",
+        output_file=f"/data/tsne_{output_prefix}_action_space.png"
+    )
+    
+    # 6. Visualize semantic state space
+    print("\n🎨 Generating t-SNE visualization for Semantic State Space...")
+    visualize_single_space(
+        embeddings=state_embeddings,
+        labels=state_labels,
+        title=f"Semantic State Embedding Space - {model_name}",
+        output_file=f"/data/tsne_{output_prefix}_state_space.png"
+    )
+    
+    # 7. Visualize combined space (Semantic State + Action)
+    print("\n🎨 Generating t-SNE visualization for Combined Space...")
+    combined_embeddings = np.vstack([state_embeddings, action_embeddings])
+    combined_labels = state_labels + action_labels
+    
+    visualize_single_space(
+        embeddings=combined_embeddings,
+        labels=combined_labels,
+        title=f"Combined Embedding Space (Semantic State + Action) - {model_name}",
+        output_file=f"/data/tsne_visualization.png" if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'figures' / 'tsne_visualization.png',
+        figsize=(20, 16)
+    )
 
-    # 4. Prepare data for plotting
+    # Save consolidated 2D coordinates and labels to a shared CSV for downstream analysis.
+    try:
+        # Recompute t-SNE with a deterministic seed for exported coordinates.
+        tsne = TSNE(n_components=2, perplexity=min(30, combined_embeddings.shape[0] - 1), random_state=42, max_iter=1000)
+        emb2d = tsne.fit_transform(combined_embeddings)
+        model_label = "Model A" if "Model A" in model_name else "Model B"
+        df = pd.DataFrame({
+            'x': emb2d[:, 0],
+            'y': emb2d[:, 1],
+            'label': combined_labels,
+            'model': model_label,
+        })
+
+        # Prefer writing into container volume path (/data) when running on Modal, else write to repo results.
+        out_csv = Path('/data') / 'tsne_embeddings_2d.csv' if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'tsne_embeddings_2d.csv'
+        out_csv.parent.mkdir(parents=True, exist_ok=True)
+        if out_csv.exists():
+            existing_df = pd.read_csv(out_csv)
+            df = pd.concat([existing_df, df], ignore_index=True)
+        df.to_csv(out_csv, index=False, encoding='utf-8')
+        print(f"   ✓ TSNE coords saved to {out_csv}")
+    except Exception as exc:
+        print(f"   ⚠️  Failed to save TSNE CSV: {exc}")
+    
+    print(f"\n✅ Visualizations saved:")
+    print(f"   - /data/tsne_{output_prefix}_action_space.png")
+    print(f"   - /data/tsne_{output_prefix}_state_space.png")
+    print(f"   - /data/tsne_visualization.png")
+    
+    # Commit to volume
+    from modal import Volume
+    vol = Volume.from_name("vhas-finetuned-output")
+    vol.commit()
+
+
+def visualize_single_space(embeddings, labels, title, output_file, figsize=(18, 14)):
+    """
+    Helper function to visualize a single embedding space.
+    """
+    # Run t-SNE
+    print(f"   Running t-SNE on {embeddings.shape[0]} embeddings...")
+    tsne = TSNE(
+        n_components=2,
+        perplexity=min(30, embeddings.shape[0] - 1),
+        random_state=42,
+        max_iter=1000
+    )
+    embeddings_2d = tsne.fit_transform(embeddings)
+    
+    # Prepare data
     df = pd.DataFrame({
         'x': embeddings_2d[:, 0],
         'y': embeddings_2d[:, 1],
         'label': labels
     })
-
-    # 5. Plot
-    print("Generating plot...")
-    plt.figure(figsize=(18, 14))
     
-    # Define a palette of 18 distinct colors
+    # Define color palette
     distinct_colors = [
         '#FF0000',  # Red
         '#00FF00',  # Green
@@ -97,13 +255,18 @@ def visualize_embedding_space(embedding_dir: str, universe_file: str, states_fil
         '#4169E1',  # Royal Blue
         '#FF8C00',  # Dark Orange
         '#8A2BE2',  # Blue Violet
+        '#ADFF2F',  # Green Yellow
+        '#FF6347',  # Tomato
     ]
     
     unique_labels = sorted(df['label'].unique())
     color_palette = {}
-    
     for idx, label in enumerate(unique_labels):
         color_palette[label] = distinct_colors[idx % len(distinct_colors)]
+    
+    # Plot
+    print(f"   Generating plot...")
+    plt.figure(figsize=figsize)
     
     sns.scatterplot(
         data=df,
@@ -117,60 +280,67 @@ def visualize_embedding_space(embedding_dir: str, universe_file: str, states_fil
         linewidth=1.5
     )
     
-    plt.title(f't-SNE Visualization of VHAS Embedding Space\n({os.path.basename(embedding_dir)})', fontsize=18, fontweight='bold')
+    plt.title(title, fontsize=18, fontweight='bold')
     plt.xlabel("t-SNE Dimension 1", fontsize=14)
     plt.ylabel("t-SNE Dimension 2", fontsize=14)
     plt.legend(title='Entity Type', bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
     
-    # Save image
-    plt.savefig(output_image_file, bbox_inches='tight')
-    print(f"Plot saved to '{output_image_file}'")
+    # Save
+    plt.savefig(output_file, bbox_inches='tight', dpi=150)
+    print(f"   ✓ Plot saved to {output_file}")
     plt.close()
 
-if __name__ == "__main__":
-    import os
 
-    # Determine relative paths from the script location
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    base_dir = os.path.join(script_dir, '..', 'output', 'embedding_space_base')
-    pretrained_dir = os.path.join(script_dir, '..', 'output', 'embedding_space_pretrained')
-
-    # Paths to definition files
-    UNIVERSE_FILE = os.path.join(script_dir, '..', '..', '..', 'vhas-demo', 'backend', 'vhas_universe.json')
-    STATES_FILE = os.path.join(script_dir, '..', '..', 'clinical_states', 'clinical_states.json')
-
-    # Output images
-    OUTPUT_DIR = os.path.join(script_dir, '..', 'output')
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    print("="*80)
-    print("STAGE 1 - EVALUATION: t-SNE VISUALIZATION")
-    print("="*80)
-    print("\nQuestion: Does the embedding map reflect expected clinical workflow structure?\n")
-
-    # Run for the base model (Model A)
-    print("\n🎨 Generating visualization for Model A...")
-    visualize_embedding_space(
-        embedding_dir=base_dir,
-        universe_file=UNIVERSE_FILE,
-        states_file=STATES_FILE,
-        output_image_file=os.path.join(OUTPUT_DIR, 'tsne_model_a_base.png')
-    )
-
-    # Run for the pretrained model (Model B)
-    print("\n🎨 Generating visualization for Model B...")
-    visualize_embedding_space(
-        embedding_dir=pretrained_dir,
-        universe_file=UNIVERSE_FILE,
-        states_file=STATES_FILE,
-        output_image_file=os.path.join(OUTPUT_DIR, 'tsne_model_b_pretrained.png')
-    )
-
+@app.local_entrypoint()
+def main():
+    """Local entrypoint - run visualizations for both models."""
     print("\n" + "="*80)
-    print("✅ VISUALIZATION COMPLETED")
+    print("DUAL-ENCODER VISUALIZATION: t-SNE EMBEDDING SPACES")
     print("="*80)
-    print(f"\nImages saved to: {OUTPUT_DIR}")
-    print("   - tsne_model_a_base.png")
-    print("   - tsne_model_b_pretrained.png")
+    print("\n📊 Question: Does the dual encoder produce embedding spaces with a meaningful structure?")
+    print("   - Semantic State Space: state prototypes grouped by operational phases")
+    print("   - Action Space: agents and tools grouped by function")
+    print("   - Combined Space: state and action representations show useful cross-modal alignment")
+    print("\n" + "="*80)
+    
+    # Paths
+    UNIVERSE_FILE = '/definitions/definitions/vhas_universe.json'
+    MODEL_A_DIR = '/data/embedding_space_model_a_dual'
+    MODEL_B_DIR = '/data/embedding_space_model_b_dual'
+    
+    # Visualize Model A
+    print("\n🔬 Visualizing Model A (Base → Fine-tune)...")
+    visualize_dual_encoder_model.remote(
+        embedding_space_dir=MODEL_A_DIR,
+        model_name="Model A (Specialty)",
+        universe_file=UNIVERSE_FILE,
+        output_prefix="model_a_dual"
+    )
+    
+    # Visualize Model B
+    print("\n🔬 Visualizing Model B (Base → Pre-train → Fine-tune)...")
+    visualize_dual_encoder_model.remote(
+        embedding_space_dir=MODEL_B_DIR,
+        model_name="Model B (Comprehensive)",
+        universe_file=UNIVERSE_FILE,
+        output_prefix="model_b_dual"
+    )
+    
+    print("\n" + "="*80)
+    print("✅ VISUALIZATION COMPLETE!")
+    print("="*80)
+    print("\n📦 Download visualizations:")
+    print("   $ modal volume get vhas-finetuned-output tsne_model_a_dual_action_space.png ./results/")
+    print("   $ modal volume get vhas-finetuned-output tsne_model_a_dual_state_space.png ./results/")
+    print("   $ modal volume get vhas-finetuned-output tsne_model_a_dual_combined.png ./results/")
+    print("   $ modal volume get vhas-finetuned-output tsne_model_b_dual_action_space.png ./results/")
+    print("   $ modal volume get vhas-finetuned-output tsne_model_b_dual_state_space.png ./results/")
+    print("   $ modal volume get vhas-finetuned-output tsne_model_b_dual_combined.png ./results/")
+    print("\n💡 Insights:")
+    print("   - Action Space: agents should form separate clusters, with tools near their owning agents")
+    print("   - Semantic State Space: state prototypes should cluster by operational phases")
+    print("   - Combined Space: states should be close to matching actions (cross-modal alignment)")
+    print("\n" + "="*80 + "\n")
+

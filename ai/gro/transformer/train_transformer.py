@@ -1,19 +1,18 @@
-# train_orchestrator_sb3.py
+# train_transformer.py
 """
-Training Orchestrator with MLP + Guidance baseline using Stable-Baselines3.
+Training policy trainer with a Transformer policy and routing using Stable-Baselines3.
 
 STRATEGY:
-- Use SB3's MlpPolicy (simple but effective)
-- Integrate GuidanceMechanism via a callback
-- Use action masking to restrict the policy to guided candidates
-- Fast to implement and a strong baseline
+- Use custom TransformerFeaturesExtractor for sequence processing
+- Integrate the routing mechanism via a callback
+- Action masking to restrict the policy to approved candidates
+- History-aware decision making
 """
 
 import os
 import sys
 import numpy as np
 from datetime import datetime
-from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
@@ -22,69 +21,58 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.monitor import Monitor
 import torch
 
-# Add paths
-sys.path.insert(0, 'scripts')
-sys.path.insert(0, 'simulation')
+# Add paths.
+# Note: When running on Modal, the current directory is already /data/gro/transformer.
+# sys.path.insert(0, 'scripts')
+# sys.path.insert(0, 'simulation')
+# sys.path.insert(0, 'transformer')
 
-from env import ClinicalWorkflowEnv
+from env import GuidelineCompliantTransformerEnv
 from guidance import GuidanceMechanism
-
-
-def _resolve_stage2_policies_root() -> Path:
-    """Return the stage-2 policy artifact root for Modal or local execution."""
-    modal_root = Path("/models")
-    if modal_root.exists():
-        return modal_root / "stage2_gro_policies"
-    return Path(__file__).resolve().parents[1] / "models" / "stage2_gro_policies"
-
-
-def _resolve_default_model_artifact_path(filename: str) -> Path:
-    """Resolve the exact artifact path for a staged policy checkpoint."""
-    return _resolve_stage2_policies_root() / filename
+from policy_model import TransformerFeaturesExtractor  # NEW: Custom Transformer
 
 
 class GuidanceAndMaskingCallback(BaseCallback):
     """
-    Callback that integrates the Guidance Mechanism with action masking for MaskablePPO.
-
-    Per-step workflow:
-    1. Retrieve the current state text from the environment
-    2. Call the Guidance mechanism to propose top-k candidates
-    3. Store the action mask for the ActionMasker wrapper to consume
+    Callback that combines routing with action masking for MaskablePPO.
+    
+    Per step:
+    1. Read the current state text from the environment
+    2. Ask routing for top-k candidates
+    3. Store the mask for ActionMasker
     """
     def __init__(self, guidance_mechanism: GuidanceMechanism, top_k: int = 5, verbose: int = 0):
         super().__init__(verbose)
         self.guidance = guidance_mechanism
         self.top_k = top_k
         
-        # Stats tracking
+        # Performance tracking
         self.total_steps = 0
         self.guidance_calls = 0
         
-        # Store current mask for ActionMasker
+        # Store the current mask for ActionMasker
         self.current_mask = None
         
     def _on_step(self) -> bool:
         """Called at each environment step."""
         try:
-            # Get current state text from the environment (unwrap from DummyVecEnv)
-            current_state_text = self.training_env.get_attr('current_state_text')[0]
+            # Read the current state text from the environment.
+            current_state_text = self.training_env.get_attr('semantic_state_text')[0]
             
             if current_state_text is None:
-                # Fallback: no masking
+                # Fallback: no masking.
                 if self.verbose > 0:
-                    print("Warning: No current_state_text available, skipping guidance")
+                    print("Warning: No semantic_state_text available, skipping routing")
                 return True
             
-            # Get candidate action names from the Guidance mechanism
+            # Get candidates from routing.
             candidate_names = self.guidance.propose_actions(
                 current_state_text, 
                 top_k=self.top_k
             )
             
-            # Get the environment's action mapping (unwrap Monitor/TimeLimit wrappers)
+            # Read the action mapping from the base environment.
             env = self.training_env.envs[0]
-            # Unwrap Monitor to get base ClinicalWorkflowEnv
             from gymnasium.wrappers import TimeLimit
             base_env = env
             while hasattr(base_env, 'env'):
@@ -93,7 +81,7 @@ class GuidanceAndMaskingCallback(BaseCallback):
             name_to_action = base_env.name_to_action
             action_space_n = base_env.action_space.n
             
-            # Create boolean action mask for MaskablePPO
+            # Build the action mask.
             mask = np.zeros(action_space_n, dtype=bool)
             valid_candidates = []
             for name in candidate_names:
@@ -102,42 +90,42 @@ class GuidanceAndMaskingCallback(BaseCallback):
                     mask[action_idx] = True
                     valid_candidates.append(name)
             
-            # This is a design decision — SummaryAgent is required for workflow completion.
+            # Always include SummaryAgent so episodes can terminate.
             if 'SummaryAgent' in name_to_action:
                 summary_idx = name_to_action['SummaryAgent']
                 if not mask[summary_idx]:
                     mask[summary_idx] = True
                     valid_candidates.append('SummaryAgent')
             
-            # Ensure there is at least one valid action
+            # Ensure at least one action remains valid.
             if not mask.any():
                 if self.verbose > 0:
-                    print(f"⚠️  WARNING: No valid candidates from {candidate_names}, allowing all actions")
+                    print(f"Warning: no valid candidates from {candidate_names}; allowing all actions")
                 mask[:] = True
             
-            # Store the mask for the ActionMasker wrapper to retrieve
+            # Store the mask for ActionMasker.
             self.current_mask = mask
             
             self.guidance_calls += 1
             self.total_steps += 1
             
-            # Log periodically
+            # Log periodically.
             if self.verbose > 0 and self.total_steps % 1000 == 0:
-                print(f"Guidance callback: {self.guidance_calls} calls, {self.total_steps} steps")
+                print(f"Routing callback: {self.guidance_calls} calls, {self.total_steps} steps")
             
         except Exception as e:
             if self.verbose > 0:
-                print(f"❌ Error in GuidanceCallback: {e}")
+                print(f"Error in routing callback: {e}")
                 import traceback
                 traceback.print_exc()
-            # Don't stop training on callback errors
+            # Keep training running if the callback fails.
             return True
         
         return True
 
 
 class MetricsCallback(BaseCallback):
-    """Callback to log custom metrics for rewards and success rate."""
+    """Callback that logs reward and success metrics."""
     def __init__(self, log_dir: str = None, verbose: int = 0):
         super().__init__(verbose)
         self.episode_rewards = []
@@ -146,7 +134,7 @@ class MetricsCallback(BaseCallback):
         self.episode_count = 0
         self.log_dir = log_dir
         
-        # Create a log file if log_dir is provided
+        # Create the log file if a directory was provided.
         if self.log_dir:
             os.makedirs(self.log_dir, exist_ok=True)
             self.log_file = os.path.join(self.log_dir, 'training_log.txt')
@@ -158,13 +146,13 @@ class MetricsCallback(BaseCallback):
                 f.write("="*80 + "\n\n")
         
     def _on_step(self) -> bool:
-        # Check for episode termination
+        # Check for episode end.
         if len(self.locals.get('dones', [])) > 0 and self.locals['dones'][0]:
-            # Episode ended
+            # Episode ended.
             if 'infos' in self.locals and len(self.locals['infos']) > 0:
                 info = self.locals['infos'][0]
                 
-                    # Track episode reward and length
+                # Track episode reward.
                 if 'episode' in info:
                     episode_reward = info['episode']['r']
                     episode_length = info['episode']['l']
@@ -173,12 +161,11 @@ class MetricsCallback(BaseCallback):
                     self.episode_lengths.append(episode_length)
                     self.episode_count += 1
                     
-                    # Determine success using terminal reward from the last step's info
-                    # Success is indicated by a positive terminal reward (R_term > 0)
+                    # Success means the terminal reward is positive.
                     if 'rewards' in info and info['rewards'].get('terminal', 0) > 0:
                         self.success_count += 1
                     
-                    # Log every 100 episodes
+                    # Log every 100 episodes.
                     if self.episode_count % 100 == 0:
                         avg_reward = np.mean(self.episode_rewards[-100:])
                         avg_length = np.mean(self.episode_lengths[-100:])
@@ -193,7 +180,7 @@ class MetricsCallback(BaseCallback):
                         
                         print(log_msg)
                         
-                        # Write to log file
+                        # Write to the log file.
                         if self.log_dir:
                             with open(self.log_file, 'a') as f:
                                 f.write(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} | ")
@@ -202,12 +189,12 @@ class MetricsCallback(BaseCallback):
                                 f.write(f"Length: {avg_length:.1f} | ")
                                 f.write(f"Success: {success_rate:.1%}\n")
                         
-                        # Log to tensorboard
+                        # Log to TensorBoard.
                         self.logger.record('rollout/ep_reward_mean_100', avg_reward)
                         self.logger.record('rollout/ep_len_mean_100', avg_length)
                         self.logger.record('rollout/success_rate_100', success_rate)
                         
-                        # Reset the success counter after logging
+                        # Reset the success counter.
                         self.success_count = 0
         
         return True
@@ -216,34 +203,32 @@ class MetricsCallback(BaseCallback):
 def train_orchestrator_baseline(
     encoder_path: str = 'all-mpnet-base-v2',
     embedding_space_path: str = None,
-    action_encoder_path: str = None,  
-    use_dual_encoder: bool = False,   
-    scenarios_data_dir: str = '../data/scenarios/data',
+    action_encoder_path: str = None,  # NEW: For dual-encoder
+    use_dual_encoder: bool = False,   # NEW: Flag to use dual-encoder
+    traces_filepath: str = 'ai/data/workflow_traces/train_traces.json',
     kb_path: str = 'data/simulation_kb.json',
-    output_dir: str = 'output/orchestrator_mlp_guided',
-    final_model_path: str | Path | None = None,
-    total_timesteps: int = 1000000,  # Increase to 1M for better convergence
-    learning_rate: float = 1e-4,     # Lower LR for stability
-    n_steps: int = 4096,             # Increase to collect more experience per rollout
-    batch_size: int = 128,           # Increase for more stable updates
-    n_epochs: int = 20,              # More epochs per update
-    gamma: float = 0.95,             # Lower to focus more on immediate reward
+    output_dir: str = 'output/vhas_orchestrator_transformer_guided',
+    total_timesteps: int = 1000000,  # Increased to 1M for better convergence
+    learning_rate: float = 3e-5,     # Optimized for stability
+    n_steps: int = 4096,             # Increased to collect more experience
+    batch_size: int = 64,            # Optimized for better gradients
+    n_epochs: int = 10,              # Reduced to limit overfitting
+    gamma: float = 0.99,             # Optimized for long-term planning
     gae_lambda: float = 0.95,
     clip_range: float = 0.2,
     top_k_guidance: int = 5,
     device: str = 'auto'
 ):
-    """
-    Train Orchestrator with MLP + Guidance baseline.
+    """Train the policy with a Transformer baseline and routing support.
     
     Args:
         encoder_path: Path to finetuned encoder model (StateEncoder if dual-encoder)
-        embedding_space_path: Path to embedding space for guidance
+        embedding_space_path: Path to embedding space for routing
         action_encoder_path: Path to ActionEncoder (for dual-encoder only)
         use_dual_encoder: Whether to use dual-encoder architecture
-        scenarios_data_dir: Directory containing clinical traces
-        kb_path: Path to simulation knowledge base
-        output_dir: Directory to save trained model
+        traces_filepath: Path to the unified trace file
+        kb_path: Path to the reference knowledge store
+        output_dir: Directory to save the trained model
         total_timesteps: Total training timesteps
         learning_rate: PPO learning rate
         n_steps: Steps per rollout
@@ -252,33 +237,33 @@ def train_orchestrator_baseline(
         gamma: Discount factor
         gae_lambda: GAE lambda
         clip_range: PPO clip range
-        top_k_guidance: Number of candidates from guidance
+        top_k_guidance: Number of candidates from routing
         device: 'cpu', 'cuda', or 'auto'
     """
     
     print("=" * 80)
-    print(f"🚀 Training VHAS Orchestrator - MLP + {'Dual-' if use_dual_encoder else ''}Guidance Baseline")
+    print(f"Training VHAS Orchestrator - Transformer + {'Dual-' if use_dual_encoder else ''}Routing (v2.0)")
     print("=" * 80)
     
-    # --- 1. LOAD COMPONENTS ---
+    # --- 1. Load components ---
     print("\n📥 Loading components...")
     
-    # Load encoder (StateEncoder if dual-encoder)
+    # Load the encoder (StateEncoder for dual-encoder mode).
     encoder_type = "StateEncoder" if use_dual_encoder else "Encoder"
     print(f"   Loading {encoder_type} from: {encoder_path}")
     encoder = SentenceTransformer(encoder_path, device=device if device != 'auto' else 'cpu')
     print(f"   ✓ {encoder_type} loaded: {encoder.get_sentence_embedding_dimension()} dims")
     
-    # Initialize Guidance (optional)
+    # Initialize routing support (optional).
     guidance = None
     guidance_callback = None
     
     if embedding_space_path and os.path.exists(embedding_space_path):
         try:
             if use_dual_encoder:
-                # Use Dual-Encoder Guidance
+                # Use dual-encoder routing.
                 from guidance_dual import DualGuidanceMechanism
-                print(f"   Loading Dual-Encoder Guidance Mechanism from: {embedding_space_path}")
+                print(f"   Loading dual-encoder routing model from: {embedding_space_path}")
                 print(f"   StateEncoder: {encoder_path}")
                 print(f"   ActionEncoder: {action_encoder_path}")
                 guidance = DualGuidanceMechanism(
@@ -286,15 +271,15 @@ def train_orchestrator_baseline(
                     action_encoder_path=action_encoder_path,
                     embedding_space_path=embedding_space_path
                 )
-                print("   ✓ Dual-Encoder Guidance Mechanism initialized")
+                print("   ✓ Dual-encoder routing initialized")
             else:
-                # Use Single-Encoder Guidance (legacy)
-                print(f"   Loading Single-Encoder Guidance Mechanism from: {embedding_space_path}")
+                # Use single-encoder routing.
+                print(f"   Loading single-encoder routing model from: {embedding_space_path}")
                 guidance = GuidanceMechanism(
                     encoder_path=encoder_path,
                     embedding_space_path=embedding_space_path
                 )
-                print("   ✓ Single-Encoder Guidance Mechanism initialized")
+                print("   ✓ Single-encoder routing initialized")
             
             guidance_callback = GuidanceAndMaskingCallback(
                 guidance_mechanism=guidance,
@@ -302,101 +287,113 @@ def train_orchestrator_baseline(
                 verbose=1
             )
         except Exception as e:
-            print(f"   ⚠️  Could not load Guidance: {e}")
-            print("   Continuing without guidance (all actions allowed)")
+            print(f"Could not load routing support: {e}")
+            print("Continuing without routing support; all actions remain allowed.")
             import traceback
             traceback.print_exc()
     else:
-            print("   ℹ️  No embedding space path provided, training without guidance")
+        print("No embedding space path provided; training without routing support.")
     
-    # --- 2. CREATE ENVIRONMENT ---
+    # --- 2. Create the environment ---
     print("\n🏗️  Creating environment...")
     
     def mask_fn(env):
-        """Mask function for ActionMasker — returns the mask from the guidance callback."""
+        """Return the current mask for ActionMasker."""
         if guidance_callback is not None and guidance_callback.current_mask is not None:
             return guidance_callback.current_mask
-        # Fallback: allow all actions
+        # Fallback: allow all actions.
         return np.ones(env.action_space.n, dtype=bool)
     
     def make_env():
-        """Factory function that creates and wraps the environment."""
-        env = ClinicalWorkflowEnv(
+        """Create the environment instance."""
+        env = GuidelineCompliantTransformerEnv(
             encoder_model=encoder,
-            scenarios_data_dir=scenarios_data_dir,
+            traces_filepath=traces_filepath,
             kb_path=kb_path,
-            use_guidance=False,  # Guidance handled by callback
-            use_dual_encoder=use_dual_encoder  # NEW: Pass dual-encoder flag
+            use_guidance=False,  # Routing is handled by the callback.
+            use_dual_encoder=use_dual_encoder
         )
-        # Wrap with Monitor for episode stats
+        # Wrap with Monitor for episode stats.
         env = Monitor(env)
-        # ALWAYS wrap with ActionMasker for MaskablePPO (even if no guidance)
+        # Wrap with ActionMasker for MaskablePPO.
         env = ActionMasker(env, mask_fn)
         return env
     
-    # Wrap the environment in DummyVecEnv (SB3 requirement)
+    # Wrap in DummyVecEnv (SB3 requirement).
     env = DummyVecEnv([make_env])
     
-    # Normalize observations and rewards for more stable training
+    # Normalize observations and rewards for stable training.
     env = VecNormalize(
         env,
-        norm_obs=True,          # Normalize observations (already normalized by encoder, but doesn't hurt)
-        norm_reward=True,       # Normalize rewards (CRITICAL for stable value function)
-        clip_obs=10.0,          # Clip normalized obs to [-10, 10]
-        clip_reward=10.0,       # Clip normalized rewards to [-10, 10]
-        gamma=gamma,            # Use same gamma as PPO for return normalization
-        epsilon=1e-8            # Small constant for numerical stability
+        norm_obs=True,
+        norm_reward=True,
+        clip_obs=10.0,
+        clip_reward=10.0,
+        gamma=gamma,
+        epsilon=1e-8
     )
     
-    print(f"   ✓ Environment created with VecNormalize")
+    print("Environment created with VecNormalize.")
     print(f"   Action space: {env.envs[0].action_space}")
     print(f"   Observation space: {env.envs[0].observation_space}")
-    print(f"   Reward normalization: ENABLED (clip_reward={10.0})")
+    print(f"   Reward normalization: enabled (clip_reward={10.0})")
     
-    # --- 3. INITIALIZE MASKABLE PPO MODEL ---
-    print("\n🧠 Initializing MaskablePPO with MlpPolicy...")
+    # --- 3. Initialize MaskablePPO with the Transformer policy ---
+    print("\n🧠 Initializing MaskablePPO with Transformer Policy...")
+    
+    # Use the custom TransformerFeaturesExtractor.
+    policy_kwargs = dict(
+        features_extractor_class=TransformerFeaturesExtractor,
+        features_extractor_kwargs=dict(
+            features_dim=256,
+            n_heads=4,
+            n_layers=2,
+            dim_feedforward=512,
+            dropout=0.1
+        ),
+        net_arch=[256, 256],
+        activation_fn=torch.nn.ReLU
+    )
     
     model = MaskablePPO(
         "MlpPolicy",
         env,
-        learning_rate=learning_rate,
+        policy_kwargs=policy_kwargs,
+        learning_rate=3e-5,
         n_steps=n_steps,
-        batch_size=batch_size,
-        n_epochs=n_epochs,
-        gamma=gamma,
+        batch_size=64,
+        n_epochs=10,
+        gamma=0.99,
         gae_lambda=gae_lambda,
         clip_range=clip_range,
-        ent_coef=0.01,           # Increase exploration (encourage exploration)
-        vf_coef=0.5,             # Weight value function loss
-        max_grad_norm=0.5,       # Clip gradients
+        ent_coef=0.01,
+        vf_coef=0.5,
+        max_grad_norm=0.5,
         verbose=1,
-        tensorboard_log="./ppo_vhas_tensorboard/",
-        device=device,
-        policy_kwargs={
-            'net_arch': [256, 256],  # 2-layer MLP with 256 units each
-            'activation_fn': torch.nn.ReLU
-        }
+        tensorboard_log="./ppo_vhas_transformer_tensorboard/",
+        device=device
     )
     
-    print(f"   ✓ MaskablePPO initialized")
+    print("MaskablePPO with Transformer initialized.")
     print(f"   Policy architecture: {model.policy}")
+    print(f"   Feature extractor: TransformerFeaturesExtractor")
     
-    # --- 4. SETUP CALLBACKS ---
+    # --- 4. Set up callbacks ---
     print("\n⚙️  Setting up callbacks...")
     
     callbacks = []
     
-    # Guidance callback (if available)
+    # Routing callback.
     if guidance_callback is not None:
         callbacks.append(guidance_callback)
-        print(f"   ✓ Guidance callback added (top_k={top_k_guidance})")
+        print(f"   Routing callback added (top_k={top_k_guidance})")
     
-    # Metrics callback with logging
+    # Metrics callback with logging.
     metrics_callback = MetricsCallback(log_dir=output_dir, verbose=1)
     callbacks.append(metrics_callback)
-    print(f"   ✓ Metrics callback added (logging to {output_dir})")
+    print(f"   Metrics callback added (logging to {output_dir})")
     
-    # Checkpoint callback for periodic saves
+    # Checkpoint callback.
     os.makedirs(output_dir, exist_ok=True)
     checkpoint_callback = CheckpointCallback(
         save_freq=10000,
@@ -404,11 +401,11 @@ def train_orchestrator_baseline(
         name_prefix='orchestrator_checkpoint'
     )
     callbacks.append(checkpoint_callback)
-    print(f"   ✓ Checkpoint callback added (save every 10k steps to {output_dir})")
+    print(f"   Checkpoint callback added (save every 10k steps to {output_dir})")
     
-    # --- 5. TRAINING ---
+    # --- 5. Train ---
     print("\n" + "=" * 80)
-    print("🎮 Starting Training")
+    print("Starting training")
     print("=" * 80)
     print(f"Total timesteps: {total_timesteps:,}")
     print(f"Learning rate: {learning_rate}")
@@ -425,35 +422,33 @@ def train_orchestrator_baseline(
     except KeyboardInterrupt:
         print("\n⚠️  Training interrupted by user")
     
-    # --- 6. SAVE FINAL MODEL ---
+    # --- 6. Save the final model ---
     print("\n💾 Saving final model...")
-    resolved_final_model_path = Path(final_model_path) if final_model_path is not None else _resolve_default_model_artifact_path("vhas_mlp_policy.zip")
-    if resolved_final_model_path.suffix != ".zip":
-        resolved_final_model_path = resolved_final_model_path.with_suffix(".zip")
-    resolved_final_model_path.parent.mkdir(parents=True, exist_ok=True)
-    model.save(str(resolved_final_model_path))
-    print(f"   ✓ Model saved to: {resolved_final_model_path}")
+    final_model_path = os.path.join(output_dir, "vhas_orchestrator_transformer_final")
+    model.save(final_model_path)
+    print(f"   ✓ Model saved to: {final_model_path}")
     
-    # Save VecNormalize statistics (important for inference)
-    vec_normalize_path = Path(output_dir) / "vec_normalize.pkl"
-    vec_normalize_path.parent.mkdir(parents=True, exist_ok=True)
-    env.save(str(vec_normalize_path))
+    # Save VecNormalize statistics for inference.
+    vec_normalize_path = os.path.join(output_dir, "vec_normalize.pkl")
+    env.save(vec_normalize_path)
     print(f"   ✓ VecNormalize stats saved to: {vec_normalize_path}")
     
-    # Save training stats
+    # Save training stats.
     stats = {
         'total_timesteps': model.num_timesteps,
         'episode_rewards': metrics_callback.episode_rewards,
         'episode_lengths': metrics_callback.episode_lengths,
         'episode_count': metrics_callback.episode_count,
+        'final_avg_reward': float(np.mean(metrics_callback.episode_rewards[-100:])) if metrics_callback.episode_rewards else 0,
+        'final_avg_length': float(np.mean(metrics_callback.episode_lengths[-100:])) if metrics_callback.episode_lengths else 0,
         'reward_mean': env.ret_rms.mean if hasattr(env, 'ret_rms') else None,
         'reward_var': env.ret_rms.var if hasattr(env, 'ret_rms') else None
     }
     
     import json
-    stats_path = Path(output_dir) / "training_stats.json"
-    with stats_path.open('w', encoding='utf-8') as f:
-        # Convert numpy arrays to lists for JSON
+    stats_path = os.path.join(output_dir, "training_stats.json")
+    with open(stats_path, 'w') as f:
+        # Convert numpy values to JSON-safe types.
         stats_json = {
             'total_timesteps': int(stats['total_timesteps']),
             'episode_count': int(stats['episode_count']),
@@ -463,33 +458,33 @@ def train_orchestrator_baseline(
         json.dump(stats_json, f, indent=2)
     print(f"   ✓ Training stats saved to: {stats_path}")
     
-    # --- 7. SUMMARY ---
+    # --- 7. Summary ---
     print("\n" + "=" * 80)
-    print("✅ Training Complete!")
+    print("Training complete!")
     print("=" * 80)
     print(f"Total episodes: {metrics_callback.episode_count}")
     print(f"Total timesteps: {model.num_timesteps:,}")
     if metrics_callback.episode_rewards:
         print(f"Final avg reward (last 100): {np.mean(metrics_callback.episode_rewards[-100:]):.2f}")
         print(f"Final avg length (last 100): {np.mean(metrics_callback.episode_lengths[-100:]):.1f}")
-    print(f"\nModel saved to: {resolved_final_model_path}")
-    print(f"Tensorboard logs: ./ppo_vhas_tensorboard/")
+    print(f"\nModel saved to: {final_model_path}.zip")
+    print("TensorBoard logs: ./ppo_vhas_tensorboard/")
     print("=" * 80)
     
     return model, stats
 
 
 if __name__ == "__main__":
-    # Example usage
+    # Example usage.
     model, stats = train_orchestrator_baseline(
-        encoder_path='all-mpnet-base-v2',  # Use base model for local testing
-        embedding_space_path=None,  # Set to actual path if available
-        scenarios_data_dir='../data/scenarios/data',
+        encoder_path='all-mpnet-base-v2',
+        embedding_space_path=None,
+        traces_filepath='ai/data/workflow_traces/train_traces.json',
         kb_path='data/simulation_kb.json',
-        output_dir='output/orchestrator_mlp_guided',
-        total_timesteps=50000,  # Reduced for testing
+        output_dir='output/vhas_orchestrator_transformer_guided',
+        total_timesteps=50000,
         top_k_guidance=5,
         device='auto'
     )
     
-    print("\n🎉 Training pipeline completed successfully!")
+    print("\nTraining pipeline completed successfully!")

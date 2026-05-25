@@ -1,6 +1,5 @@
 # gnn/env.py
-"""
-ClinicalWorkflowEnv for GNN-based RL training.
+"""GuidelineCompliantGNNEnv for graph-based operational training.
 
 This environment returns HeteroData observations (graph-structured) instead of flat vectors.
 It integrates with the VHAS_GNN_Wrapper to bridge to RSL-RL's TensorDict requirements.
@@ -26,16 +25,15 @@ except ImportError:
     print("Warning: GuidanceMechanism not available. Action masking will use all actions.")
 
 
-class ClinicalWorkflowEnv(gym.Env):
-    """
-    Clinical workflow env for GNN-based training.
-    
+class GuidelineCompliantGNNEnv(gym.Env):
+    """Operational environment for graph-based training.
+
     Key features:
     - Returns HeteroData observations (graph structure)
     - Dynamic action masking via GuidanceMechanism
-    - Lookup-based state transitions from Knowledge Base
+    - Lookup-based state transitions from the reference store
     - Multi-component reward function
-    
+
     Observation Space: HeteroData with node types (agent, state, tool) and edge types
     Action Space: Discrete(num_agents)
     """
@@ -45,7 +43,7 @@ class ClinicalWorkflowEnv(gym.Env):
     def __init__(
         self,
         encoder_model: SentenceTransformer,
-        scenarios_data_dir: str,
+        traces_filepath: str,
         kb_path: str = "data/simulation_kb.json",
         guidance_encoder_path: str = None,
         guidance_embedding_space_path: str = None,
@@ -56,7 +54,7 @@ class ClinicalWorkflowEnv(gym.Env):
         super().__init__()
         
         print("=" * 80)
-        print("🔧 Initializing ClinicalWorkflowEnv (GNN Mode)")
+        print("🔧 Initializing GuidelineCompliantGNNEnv (operational mode)")
         print("=" * 80)
         
         self.device = device
@@ -64,8 +62,8 @@ class ClinicalWorkflowEnv(gym.Env):
         self.embedding_dim = encoder_model.get_sentence_embedding_dimension()
         self.top_k_guidance = top_k_guidance
         
-        # 1. Load knowledge base
-        print(f"📚 Loading Knowledge Base from: {kb_path}")
+        # 1. Load reference knowledge store
+        print(f"📚 Loading reference store from: {kb_path}")
         with open(kb_path, 'r', encoding='utf-8') as f:
             self.knowledge_base = json.load(f)
         print(f"   ✓ Loaded {len(self.knowledge_base['state_transitions'])} state transitions")
@@ -86,9 +84,9 @@ class ClinicalWorkflowEnv(gym.Env):
         else:
             print(f"   ℹ️  Guidance disabled (all actions allowed)")
         
-        # 3. Load expert traces
-        print(f"📖 Loading expert traces from: {scenarios_data_dir}")
-        self.all_traces_data = self._load_expert_traces(scenarios_data_dir)
+        # 3. Load reference traces
+        print(f"📖 Loading trace data from: {traces_filepath}")
+        self.all_traces_data = self._load_expert_traces(traces_filepath)
         print(f"   ✓ Loaded {len(self.all_traces_data)} traces")
         
         # 4. Define action space
@@ -108,7 +106,7 @@ class ClinicalWorkflowEnv(gym.Env):
         # 6. Episode state
         self._current_step = 0
         self.current_expert_trace = None
-        self.current_state_text = None
+        self.semantic_state_text = None
         self.current_graph = None  # Current HeteroData obs
         
         # 7. Load VHAS universe
@@ -121,7 +119,7 @@ class ClinicalWorkflowEnv(gym.Env):
         print("   ✓ Embeddings cached")
         
         print("=" * 80)
-        print("✅ ClinicalWorkflowEnv Initialized Successfully (GNN Mode)")
+        print("✅ GuidelineCompliantGNNEnv Initialized Successfully (operational mode)")
         print(f"   • {self.num_agents} agents")
         print(f"   • {len(self.all_traces_data)} training traces")
         print(f"   • Observation type: HeteroData (graph)")
@@ -184,27 +182,25 @@ class ClinicalWorkflowEnv(gym.Env):
             self.tool_embeddings = {}
             self.tool_to_agent_map = {}
     
-    def _load_expert_traces(self, scenarios_data_dir: str) -> list:
-        """Load and parse all traces from batch folders."""
-        all_traces = []
-        
-        if not os.path.isdir(scenarios_data_dir):
-            raise FileNotFoundError(f"Directory not found: {scenarios_data_dir}")
-        
-        batch_folders = sorted([
-            f for f in os.listdir(scenarios_data_dir)
-            if f.startswith('batch_') and os.path.isdir(os.path.join(scenarios_data_dir, f))
-        ])
-        
-        for batch_folder in batch_folders:
-            batch_num = batch_folder.split('_')[1]
-            trace_file = os.path.join(scenarios_data_dir, batch_folder, f'traces_{batch_num}.json')
-            if os.path.exists(trace_file):
-                with open(trace_file, 'r', encoding='utf-8') as f:
-                    traces = json.load(f)
-                    all_traces.extend(traces)
-        
-        return all_traces
+    def _load_expert_traces(self, traces_filepath: str) -> list:
+        """Load and parse a unified trace file from the provided path."""
+        if not os.path.isfile(traces_filepath):
+            raise FileNotFoundError(f"Trace file not found: {traces_filepath}")
+
+        with open(traces_filepath, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        if isinstance(payload, dict):
+            traces = payload.get('traces', [])
+        elif isinstance(payload, list):
+            traces = payload
+        else:
+            raise ValueError(f"Unsupported trace payload in {traces_filepath}")
+
+        if not isinstance(traces, list):
+            raise ValueError(f"Invalid trace list in {traces_filepath}")
+
+        return traces
     
     def _construct_hetero_data(self, state_text: str) -> HeteroData:
         """
@@ -294,11 +290,11 @@ class ClinicalWorkflowEnv(gym.Env):
         """
         mask = np.zeros(self.num_agents, dtype=np.uint8)
         
-        if self.guidance is not None and self.current_state_text is not None:
+        if self.guidance is not None and self.semantic_state_text is not None:
             try:
                 # Get top-k agent proposals
                 candidate_names = self.guidance.propose_actions(
-                    self.current_state_text,
+                    self.semantic_state_text,
                     top_k=self.top_k_guidance
                 )
                 
@@ -336,10 +332,10 @@ class ClinicalWorkflowEnv(gym.Env):
         """
         super().reset(seed=seed)
         
-        # 1. Pick a random expert trace
+        # 1. Pick a random reference trace
         selected_trace = random.choice(self.all_traces_data)
         
-        # 2. Extract expert (state, action) pairs
+        # 2. Extract reference (state, action) pairs
         expert_sequence = []
         for span in selected_trace['spans']:
             attrs = span.get('attributes', {})
@@ -353,8 +349,8 @@ class ClinicalWorkflowEnv(gym.Env):
         self._current_step = 0
         
         # 3. Build initial graph
-        self.current_state_text = self.current_expert_trace[0][0]
-        self.current_graph = self._construct_hetero_data(self.current_state_text)
+        self.semantic_state_text = self.current_expert_trace[0][0]
+        self.current_graph = self._construct_hetero_data(self.semantic_state_text)
         
         # 4. Build action mask
         action_mask = self._get_action_mask()
@@ -362,7 +358,7 @@ class ClinicalWorkflowEnv(gym.Env):
         # 5. Build info dict
         info = {
             'action_mask': action_mask,
-            'current_state_text': self.current_state_text,
+            'semantic_state_text': self.semantic_state_text,
             'expert_action': self.current_expert_trace[0][1],
             'trace_length': len(self.current_expert_trace),
             'episode_step': self._current_step
@@ -387,7 +383,7 @@ class ClinicalWorkflowEnv(gym.Env):
         agent_name = self.action_to_name[action]
         
         # --- 1. Lookup state transition ---
-        transition_key = json.dumps([self.current_state_text, agent_name], ensure_ascii=False)
+        transition_key = json.dumps([self.semantic_state_text, agent_name], ensure_ascii=False)
         
         if transition_key in self.knowledge_base["state_transitions"]:
             next_state_text = self.knowledge_base["state_transitions"][transition_key]
@@ -444,7 +440,7 @@ class ClinicalWorkflowEnv(gym.Env):
         reward = (w_eff * R_eff) + (w_conf * R_conf) + R_term
         
         # --- 3. Update state and build next graph ---
-        self.current_state_text = next_state_text
+        self.semantic_state_text = next_state_text
         self.current_graph = self._construct_hetero_data(next_state_text)
         
         # --- 4. Build next action mask ---
@@ -453,7 +449,7 @@ class ClinicalWorkflowEnv(gym.Env):
         # --- 5. Build info dict ---
         info = {
             'action_mask': action_mask,
-            'current_state_text': next_state_text,
+            'semantic_state_text': next_state_text,
             'status': status,
             'episode_step': self._current_step,
             'rewards': {
@@ -473,10 +469,14 @@ class ClinicalWorkflowEnv(gym.Env):
         if mode == 'human':
             print(f"\n{'='*70}")
             print(f"Step: {self._current_step}")
-            print(f"State: {self.current_state_text[:100]}...")
+            print(f"State: {self.semantic_state_text[:100]}...")
             print(f"Graph: {self.current_graph}")
             print(f"{'='*70}\n")
     
     def close(self):
         """Clean up resources."""
         pass
+
+
+# Backward-compatible alias for existing imports.
+ClinicalWorkflowEnv = GuidelineCompliantGNNEnv

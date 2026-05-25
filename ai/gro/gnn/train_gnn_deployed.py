@@ -165,7 +165,7 @@ def train_gnn(
 
     # Paths in the Modal volume
     encoder_path = "/models/model_a"          # Finetuned encoder
-    scenarios_data_dir = "/data/scenarios/data"
+    traces_filepath = "/data/workflow_traces/train_traces.json"
     kb_path = "/data/simulation_kb.json"
 
     # Convert total_timesteps -> max_iterations for RSL-RL
@@ -191,7 +191,7 @@ def train_gnn(
         runner = train_vhas_gnn(
             # Data
             encoder_path=encoder_path,
-            scenarios_data_dir=scenarios_data_dir,
+            traces_filepath=traces_filepath,
             kb_path=kb_path,
             guidance_encoder_path=None,               # Can be re-enabled later
             guidance_embedding_space_path=None,

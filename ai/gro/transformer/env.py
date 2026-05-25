@@ -26,17 +26,17 @@ except ImportError:
 if not SINGLE_GUIDANCE_AVAILABLE and not DUAL_GUIDANCE_AVAILABLE:
     print("Warning: No GuidanceMechanism available. Running without guidance.")
 
-class ClinicalWorkflowEnv(gym.Env):
-    """
-    Simulation env for VHAS, following Gymnasium conventions.
-    It is a lookup machine: it does not think and has no medical if/else logic.
-    It only looks up state transitions from a knowledge base built from gold traces.
+class GuidelineCompliantTransformerEnv(gym.Env):
+    """Operational environment for VHAS-style sequence modeling.
+
+    The environment follows Gymnasium conventions and performs lookup-based
+    state transitions from a trace-derived reference store.
     """
     metadata = {'render_modes': ['human']}
 
     def __init__(self, 
                  encoder_model, 
-                 scenarios_data_dir: str, 
+                 traces_filepath: str, 
                  kb_path: str = "data/simulation_kb.json",
                  guidance_encoder_path: str = None,
                  guidance_embedding_space_path: str = None,
@@ -45,9 +45,9 @@ class ClinicalWorkflowEnv(gym.Env):
                  use_dual_encoder: bool = False):  # NEW: Flag to use dual-encoder
         super().__init__()
         
-        print("--- Initializing ClinicalWorkflowEnv (Lookup-Based) ---")
+        print("--- Initializing GuidelineCompliantTransformerEnv (operational mode) ---")
         
-        # 1. Load the knowledge base with state transitions
+        # 1. Load the reference store with state transitions
         self.encoder = encoder_model
         with open(kb_path, 'r', encoding='utf-8') as f:
             self.knowledge_base = json.load(f)
@@ -84,8 +84,8 @@ class ClinicalWorkflowEnv(gym.Env):
         else:
             print(f"   ℹ️  Guidance Mechanism disabled (use_guidance={use_guidance})")
         
-        # 3. Load expert traces from batch folders
-        self.all_traces_data = self._load_expert_traces(scenarios_data_dir)
+        # 3. Load reference traces from a single file
+        self.all_traces_data = self._load_expert_traces(traces_filepath)
         
         # 4. Define the action space
         # Extract agent names from traces instead of AGENT_REGISTRY_SIM
@@ -108,33 +108,33 @@ class ClinicalWorkflowEnv(gym.Env):
         
         # 6. Episode tracking variables
         self._current_step = 0
-        self.current_expert_trace = None  # Expert (state, action) sequence
-        self.current_state_text = None    # Current state in the episode
+        self.current_expert_trace = None  # Reference (state, action) sequence
+        self.semantic_state_text = None   # Current state in the episode
         self.current_history = []  # History of (state, action) texts for the Transformer
         
-        print(f"--- ClinicalWorkflowEnv Initialized Successfully with {len(self.all_traces_data)} traces. ---")
+        print(f"--- GuidelineCompliantTransformerEnv initialized successfully with {len(self.all_traces_data)} traces. ---")
 
-    def _load_expert_traces(self, scenarios_data_dir: str) -> list:
-        """Load and parse all traces from batch folders."""
-        all_traces = []
-        print(f"Loading expert traces from {scenarios_data_dir}...")
-        
-        if not os.path.isdir(scenarios_data_dir):
-            raise FileNotFoundError(f"Directory not found at: {scenarios_data_dir}")
+    def _load_expert_traces(self, traces_filepath: str) -> list:
+        """Load and parse a single unified trace file from the provided path."""
+        print(f"Loading trace data from {traces_filepath}...")
 
-        # Find the batch folders
-        batch_folders = sorted([f for f in os.listdir(scenarios_data_dir) 
-                               if f.startswith('batch_') and os.path.isdir(os.path.join(scenarios_data_dir, f))])
-        
-        for batch_folder in batch_folders:
-            batch_num = batch_folder.split('_')[1]
-            trace_file = os.path.join(scenarios_data_dir, batch_folder, f'traces_{batch_num}.json')
-            if os.path.exists(trace_file):
-                with open(trace_file, 'r', encoding='utf-8') as f:
-                    traces = json.load(f)
-                    all_traces.extend(traces)
-        
-        print(f"Loaded {len(all_traces)} traces from {len(batch_folders)} batches.")
+        if not os.path.isfile(traces_filepath):
+            raise FileNotFoundError(f"Trace file not found at: {traces_filepath}")
+
+        with open(traces_filepath, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        if isinstance(payload, dict):
+            all_traces = payload.get('traces', [])
+        elif isinstance(payload, list):
+            all_traces = payload
+        else:
+            raise ValueError(f"Unsupported trace payload in {traces_filepath}")
+
+        if not isinstance(all_traces, list):
+            raise ValueError(f"Invalid trace list in {traces_filepath}")
+
+        print(f"Loaded {len(all_traces)} traces from unified file.")
         return all_traces
 
     def _get_obs(self) -> np.ndarray:
@@ -176,7 +176,7 @@ class ClinicalWorkflowEnv(gym.Env):
         Get candidate actions for the current state using the guidance mechanism.
         
         Args:
-            current_state_text: State text to query (defaults to self.current_state_text)
+            current_state_text: State text to query (defaults to self.semantic_state_text)
             top_k: Number of candidates to propose
         
         Returns:
@@ -186,7 +186,7 @@ class ClinicalWorkflowEnv(gym.Env):
                 'action_mask': np.ndarray  # Binary action mask
             }
         """
-        state_text = current_state_text or self.current_state_text
+        state_text = current_state_text or self.semantic_state_text
         
         if self.guidance is None:
             # Fallback: return all agents with equal priority
@@ -247,13 +247,13 @@ class ClinicalWorkflowEnv(gym.Env):
         self._current_step = 0
         
         # 3. Initialize history with the initial state
-        self.current_state_text = self.current_expert_trace[0][0]
-        self.current_history = [self.current_state_text]  # Start with the initial state
+        self.semantic_state_text = self.current_expert_trace[0][0]
+        self.current_history = [self.semantic_state_text]  # Start with the initial state
         
         # 4. Generate the sequence observation
         observation = self._get_obs()
         info = {
-            "current_state_text": self.current_state_text,
+            "semantic_state_text": self.semantic_state_text,
             "expert_action": self.current_expert_trace[0][1],
             "trace_length": len(self.current_expert_trace)
         }
@@ -266,7 +266,7 @@ class ClinicalWorkflowEnv(gym.Env):
         agent_name_to_call = self.action_to_name[action]
         
         # --- Step 1: Look up the state transition ---
-        transition_key = json.dumps([self.current_state_text, agent_name_to_call], ensure_ascii=False)
+        transition_key = json.dumps([self.semantic_state_text, agent_name_to_call], ensure_ascii=False)
         
         if transition_key in self.knowledge_base["state_transitions"]:
             # Found in the KB: observed action
@@ -332,10 +332,10 @@ class ClinicalWorkflowEnv(gym.Env):
         reward = (w_eff * R_eff) + (w_conf * R_conf) + R_term
         
         # Update the state for the next step
-        self.current_state_text = next_state_text
+        self.semantic_state_text = next_state_text
         
         info = {
-            "current_state_text": next_state_text,
+            "semantic_state_text": next_state_text,
             "status": status,
             "step": self._current_step,
             "rewards": {
@@ -347,3 +347,7 @@ class ClinicalWorkflowEnv(gym.Env):
         }
         
         return observation, reward, done, False, info
+
+
+    # Backward-compatible alias for existing imports.
+    ClinicalWorkflowEnv = GuidelineCompliantTransformerEnv

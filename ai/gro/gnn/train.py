@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.abspath('../../rsl_rl'))
 from rsl_rl.runners import OnPolicyRunner
 
 # VHAS imports
-from env import ClinicalWorkflowEnv
+from env import GuidelineCompliantGNNEnv
 from wrappers import VHAS_GNN_Wrapper
 from actor_critic_gnn import ActorCriticGNN
 from vec_env_wrapper import VHAS_VecEnv
@@ -53,7 +53,7 @@ def _resolve_gnn_artifact_path(filename: str) -> Path:
 
 def make_env(
     encoder_path: str,
-    scenarios_data_dir: str,
+    traces_filepath: str,
     kb_path: str,
     guidance_encoder_path: str = None,
     guidance_embedding_space_path: str = None,
@@ -62,11 +62,11 @@ def make_env(
     device: str = "cuda"
 ):
     """
-    Build a wrapped ClinicalWorkflowEnv.
+    Build a wrapped GuidelineCompliantGNNEnv.
 
     Steps:
     1. Load the SentenceTransformer encoder
-    2. Create ClinicalWorkflowEnv (HeteroData output)
+    2. Create GuidelineCompliantGNNEnv (HeteroData output)
     3. Wrap it with VHAS_GNN_Wrapper (HeteroData -> TensorDict)
 
     Returns:
@@ -76,9 +76,9 @@ def make_env(
     encoder = SentenceTransformer(encoder_path, device=device)
     
     # Create base env (returns HeteroData observations)
-    raw_env = ClinicalWorkflowEnv(
+    raw_env = GuidelineCompliantGNNEnv(
         encoder_model=encoder,
-        scenarios_data_dir=scenarios_data_dir,
+        traces_filepath=traces_filepath,
         kb_path=kb_path,
         guidance_encoder_path=guidance_encoder_path,
         guidance_embedding_space_path=guidance_embedding_space_path,
@@ -101,7 +101,7 @@ def make_env(
 def train_vhas_gnn(
     # Data paths
     encoder_path: str = 'all-mpnet-base-v2',
-    scenarios_data_dir: str = '../data/scenarios/data',
+    traces_filepath: str = '../data/workflow_traces/train_traces.json',
     kb_path: str = '../data/simulation_kb.json',
     guidance_encoder_path: str = None,
     guidance_embedding_space_path: str = None,
@@ -140,7 +140,7 @@ def train_vhas_gnn(
 
     Args:
         encoder_path: Path to the SentenceTransformer model
-        scenarios_data_dir: Directory with expert traces
+        traces_filepath: Path to the unified trace file
         kb_path: Path to the simulation knowledge base
         guidance_encoder_path: Optional guidance encoder path
         guidance_embedding_space_path: Optional guidance embedding path
@@ -198,7 +198,7 @@ def train_vhas_gnn(
         """Build one wrapped VHAS environment."""
         return make_env(
             encoder_path=encoder_path,
-            scenarios_data_dir=scenarios_data_dir,
+            traces_filepath=traces_filepath,
             kb_path=kb_path,
             guidance_encoder_path=guidance_encoder_path,
             guidance_embedding_space_path=guidance_embedding_space_path,
@@ -370,7 +370,7 @@ if __name__ == "__main__":
     # Local testing
     train_vhas_gnn(
         encoder_path='all-mpnet-base-v2',  # Use base model
-        scenarios_data_dir='../data/scenarios/data',
+        traces_filepath='../data/workflow_traces/train_traces.json',
         kb_path='../data/simulation_kb.json',
         guidance_encoder_path=None,  # Set an actual path if available
         guidance_embedding_space_path=None,  # Set an actual path if available
