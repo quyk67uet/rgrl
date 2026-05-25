@@ -20,10 +20,9 @@ if TYPE_CHECKING:
     from torch_geometric.data import HeteroData
 
 MODEL_CHECKPOINT_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "models"
-    / "stage2_gro_policies"
-    / "vhas_gnn_afan_best.pt"
+    (Path("/models") / "stage2_gro_policies" / "vhas_gnn_afan_best.pt")
+    if Path("/models").exists()
+    else Path(__file__).resolve().parents[1] / "models" / "stage2_gro_policies" / "vhas_gnn_afan_best.pt"
 )
 
 # Structural pathway mapping to preserve downstream metric compatibility.

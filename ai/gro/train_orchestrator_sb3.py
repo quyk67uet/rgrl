@@ -13,6 +13,7 @@ import os
 import sys
 import numpy as np
 from datetime import datetime
+from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
@@ -27,6 +28,19 @@ sys.path.insert(0, 'simulation')
 
 from env import ClinicalWorkflowEnv
 from guidance import GuidanceMechanism
+
+
+def _resolve_stage2_policies_root() -> Path:
+    """Return the stage-2 policy artifact root for Modal or local execution."""
+    modal_root = Path("/models")
+    if modal_root.exists():
+        return modal_root / "stage2_gro_policies"
+    return Path(__file__).resolve().parents[1] / "models" / "stage2_gro_policies"
+
+
+def _resolve_default_model_artifact_path(filename: str) -> Path:
+    """Resolve the exact artifact path for a staged policy checkpoint."""
+    return _resolve_stage2_policies_root() / filename
 
 
 class GuidanceAndMaskingCallback(BaseCallback):
@@ -207,6 +221,7 @@ def train_orchestrator_baseline(
     scenarios_data_dir: str = '../data/scenarios/data',
     kb_path: str = 'data/simulation_kb.json',
     output_dir: str = 'output/orchestrator_mlp_guided',
+    final_model_path: str | Path | None = None,
     total_timesteps: int = 1000000,  # Increase to 1M for better convergence
     learning_rate: float = 1e-4,     # Lower LR for stability
     n_steps: int = 4096,             # Increase to collect more experience per rollout
@@ -412,13 +427,17 @@ def train_orchestrator_baseline(
     
     # --- 6. SAVE FINAL MODEL ---
     print("\n💾 Saving final model...")
-    final_model_path = os.path.join(output_dir, "orchestrator_mlp_guided_final")
-    model.save(final_model_path)
-    print(f"   ✓ Model saved to: {final_model_path}")
+    resolved_final_model_path = Path(final_model_path) if final_model_path is not None else _resolve_default_model_artifact_path("vhas_mlp_policy.zip")
+    if resolved_final_model_path.suffix != ".zip":
+        resolved_final_model_path = resolved_final_model_path.with_suffix(".zip")
+    resolved_final_model_path.parent.mkdir(parents=True, exist_ok=True)
+    model.save(str(resolved_final_model_path))
+    print(f"   ✓ Model saved to: {resolved_final_model_path}")
     
     # Save VecNormalize statistics (important for inference)
-    vec_normalize_path = os.path.join(output_dir, "vec_normalize.pkl")
-    env.save(vec_normalize_path)
+    vec_normalize_path = Path(output_dir) / "vec_normalize.pkl"
+    vec_normalize_path.parent.mkdir(parents=True, exist_ok=True)
+    env.save(str(vec_normalize_path))
     print(f"   ✓ VecNormalize stats saved to: {vec_normalize_path}")
     
     # Save training stats
@@ -432,8 +451,8 @@ def train_orchestrator_baseline(
     }
     
     import json
-    stats_path = os.path.join(output_dir, "training_stats.json")
-    with open(stats_path, 'w') as f:
+    stats_path = Path(output_dir) / "training_stats.json"
+    with stats_path.open('w', encoding='utf-8') as f:
         # Convert numpy arrays to lists for JSON
         stats_json = {
             'total_timesteps': int(stats['total_timesteps']),
@@ -453,7 +472,7 @@ def train_orchestrator_baseline(
     if metrics_callback.episode_rewards:
         print(f"Final avg reward (last 100): {np.mean(metrics_callback.episode_rewards[-100:]):.2f}")
         print(f"Final avg length (last 100): {np.mean(metrics_callback.episode_lengths[-100:]):.1f}")
-    print(f"\nModel saved to: {final_model_path}.zip")
+    print(f"\nModel saved to: {resolved_final_model_path}")
     print(f"Tensorboard logs: ./ppo_vhas_tensorboard/")
     print("=" * 80)
     

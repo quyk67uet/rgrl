@@ -21,6 +21,7 @@ Download results:
 
 import modal
 from datetime import datetime
+from pathlib import Path
 
 app = modal.App("vhas-no-guidance-model-b")
 
@@ -43,6 +44,14 @@ image = (
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
+
+
+def _resolve_stage2_policy_artifact_path(filename: str) -> Path:
+    """Return the stage-2 policy artifact path for Modal or local execution."""
+    modal_models_root = Path("/models")
+    if modal_models_root.exists():
+        return modal_models_root / "stage2_gro_policies" / filename
+    return Path(__file__).resolve().parents[1] / "models" / "stage2_gro_policies" / filename
 
 
 @app.function(
@@ -82,6 +91,7 @@ def train_model_b_no_guidance(
     encoder_path = "/models/model_b"
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
+    final_model_path = _resolve_stage2_policy_artifact_path("vanilla_rl_baseline.zip")
     
     # Output directory with clear naming
     if run_id:
@@ -98,6 +108,7 @@ def train_model_b_no_guidance(
             kb_path=kb_path,
             total_timesteps=total_timesteps,
             output_dir=output_dir,
+            final_model_path=final_model_path,
             top_k_guidance=5,  # Ignored when no guidance
             device="cpu"
         )
@@ -119,7 +130,8 @@ def train_model_b_no_guidance(
             "model": "model_b",
             "status": "success",
             "stats": stats,
-            "output_dir": output_dir
+            "output_dir": output_dir,
+            "final_model_path": str(final_model_path)
         }
     
     except Exception as e:
@@ -132,7 +144,8 @@ def train_model_b_no_guidance(
             "model": "model_b",
             "status": "failed",
             "error": str(e),
-            "output_dir": output_dir
+            "output_dir": output_dir,
+            "final_model_path": str(final_model_path)
         }
 
 
@@ -190,6 +203,7 @@ def start_training(
     
     print(f"\n💾 Download trained model:")
     print(f"   modal volume get vhas-training-results {result.get('output_dir', '').replace('/results/', '')} ./results_no_guidance_model_b/")
+    print(f"   Final model artifact: {result.get('final_model_path')}")
     
     return result
 

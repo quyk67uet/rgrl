@@ -19,6 +19,8 @@ import os
 import sys
 import torch
 from datetime import datetime
+from pathlib import Path
+from shutil import copy2
 from sentence_transformers import SentenceTransformer
 
 # Add project paths
@@ -34,6 +36,19 @@ from env import ClinicalWorkflowEnv
 from wrappers import VHAS_GNN_Wrapper
 from actor_critic_gnn import ActorCriticGNN
 from vec_env_wrapper import VHAS_VecEnv
+
+
+def _resolve_stage2_policies_root() -> Path:
+    """Return the stage-2 policy artifact root for Modal or local execution."""
+    modal_models_root = Path("/models")
+    if modal_models_root.exists():
+        return modal_models_root / "stage2_gro_policies"
+    return Path(__file__).resolve().parents[2] / "models" / "stage2_gro_policies"
+
+
+def _resolve_gnn_artifact_path(filename: str) -> Path:
+    """Return the exact stage-2 GNN checkpoint path."""
+    return _resolve_stage2_policies_root() / filename
 
 
 def make_env(
@@ -117,6 +132,7 @@ def train_vhas_gnn(
     # Logging
     log_dir: str = None,
     experiment_name: str = None,
+    final_checkpoint_path: str | Path | None = None,
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
 ):
     """
@@ -299,12 +315,38 @@ def train_vhas_gnn(
     
     try:
         runner.learn(num_learning_iterations=max_iterations)
+
+        # Copy the latest saved GNN checkpoint to the canonical stage-2 path.
+        resolved_final_checkpoint_path = (
+            Path(final_checkpoint_path)
+            if final_checkpoint_path is not None
+            else _resolve_gnn_artifact_path("vhas_gnn_afan_best.pt")
+        )
+        resolved_final_checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+        candidate_checkpoints = [
+            path for path in Path(log_dir).rglob("*.pt")
+            if path.is_file()
+        ]
+        candidate_checkpoints.extend(
+            path for path in Path(log_dir).rglob("*.pth")
+            if path.is_file()
+        )
+        if candidate_checkpoints:
+            latest_checkpoint = max(candidate_checkpoints, key=lambda path: path.stat().st_mtime)
+            copy2(latest_checkpoint, resolved_final_checkpoint_path)
+            print(f"   ✓ Canonical checkpoint saved to: {resolved_final_checkpoint_path}")
+        else:
+            print(
+                f"   ⚠️  No checkpoint file found under {log_dir}; canonical artifact not updated."
+            )
         
         print("\n" + "=" * 80)
         print("✅ TRAINING COMPLETE!")
         print("=" * 80)
         print(f"Total iterations: {max_iterations}")
         print(f"Model saved to: {log_dir}")
+        print(f"Canonical checkpoint path: {resolved_final_checkpoint_path}")
         print(f"Tensorboard logs: {log_dir}")
         print("=" * 80)
         
