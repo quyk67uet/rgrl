@@ -2,16 +2,16 @@
 """
 Dual-Encoder Guidance Mechanism (Two-Tower Architecture)
 
-KIẾN TRÚC:
-- StateEncoder: Mã hóa Clinical States thành query vectors
-- ActionEncoder: Đã mã hóa Actions (Agents + Tools) thành embedding space
-- Guidance: Query bằng StateEncoder, search trong ActionEncoder space
+ARCHITECTURE:
+- StateEncoder: encodes clinical states into query vectors
+- ActionEncoder: encodes actions (agents + tools) into the embedding space
+- Guidance: query with StateEncoder and search in the ActionEncoder space
 
-ƯU ĐIỂM:
-- Loại bỏ hoàn toàn "surface similarity curse"
-- States không bao giờ là "hàng xóm" của States trong search
-- Tìm kiếm trực tiếp trong không gian Actions
-- Cực kỳ hiệu quả và chính xác
+ADVANTAGES:
+- Eliminates the "surface similarity curse"
+- States are never compared against other states in search
+- Searches directly in the action space
+- Fast and accurate
 """
 
 import json
@@ -28,7 +28,7 @@ class DualGuidanceMechanism:
         embedding_space_path: str
     ):
         """
-        Khởi tạo Dual-Encoder Guidance Mechanism.
+        Initialize the dual-encoder guidance mechanism.
         
         Args:
             state_encoder_path: Path to StateEncoder model
@@ -37,17 +37,17 @@ class DualGuidanceMechanism:
         """
         print("--- Initializing Dual-Encoder Guidance Mechanism ---")
         
-        # 1. Tải StateEncoder (dùng để encode query states)
+        # 1. Load StateEncoder for query states
         print(f"Loading StateEncoder from: {state_encoder_path}")
         self.state_encoder = SentenceTransformer(state_encoder_path)
         print(f"   ✓ StateEncoder loaded ({self.state_encoder.get_sentence_embedding_dimension()} dims)")
         
-        # 2. Tải Action Embeddings (pre-computed từ ActionEncoder)
+        # 2. Load precomputed action embeddings
         print(f"Loading action embeddings from: {embedding_space_path}")
         self.action_embeddings = np.load(os.path.join(embedding_space_path, 'action_embeddings.npy'))
         print(f"   ✓ Action embeddings loaded: {self.action_embeddings.shape}")
         
-        # 3. Tải Action metadata
+        # 3. Load action metadata
         with open(os.path.join(embedding_space_path, 'action_id_to_name.json'), 'r') as f:
             self.action_id_to_name = json.load(f)
         self.action_name_to_id = {v: int(k) for k, v in self.action_id_to_name.items()}
@@ -55,10 +55,10 @@ class DualGuidanceMechanism:
         with open(os.path.join(embedding_space_path, 'owner_map.json'), 'r') as f:
             self.owner_map = json.load(f)
         
-        # Tạo một set các tên agent để kiểm tra nhanh
+        # Cache agent names for fast lookup
         self.agent_names = set(self.owner_map.values())
         
-        # 4. Load architecture info (optional, for debugging)
+        # 4. Load architecture info (optional)
         architecture_file = os.path.join(embedding_space_path, 'architecture_info.json')
         if os.path.exists(architecture_file):
             with open(architecture_file, 'r') as f:
@@ -71,36 +71,36 @@ class DualGuidanceMechanism:
 
     def propose_actions(self, current_state: str, top_k: int = 5) -> list[str]:
         """
-        Implement Dual-Encoder Guidance để đề xuất top-k agents.
+        Use dual-encoder guidance to propose top-k agents.
         
         WORKFLOW:
-        1. Encode current_state bằng StateEncoder → query_vector
-        2. Tính cosine similarity giữa query_vector và action_embeddings
-        3. Lấy top-N actions có điểm cao nhất
-        4. Traverse từ Tools → Agents (nếu cần)
-        5. Trả về top-k Agents
+        1. Encode current_state with StateEncoder -> query_vector
+        2. Compute cosine similarity between query_vector and action_embeddings
+        3. Take the top-N actions with the highest scores
+        4. Traverse from tools to agents if needed
+        5. Return top-k agents
         
         Args:
-            current_state: Mô tả text của Trạng thái Lâm sàng hiện tại.
-            top_k: Số lượng agent cuối cùng cần đề xuất.
+            current_state: Text description of the current clinical state.
+            top_k: Number of agents to return.
         
         Returns:
-            List[str]: Danh sách tên agents được đề xuất
+            List[str]: Proposed agent names
         """
         
-        # --- Bước 1: Encode State với StateEncoder ---
+        # --- Step 1: Encode the state with StateEncoder ---
         query_vector = self.state_encoder.encode(current_state, convert_to_tensor=False).reshape(1, -1)
         
-        # --- Bước 2: Tìm kiếm trong Action Embedding Space ---
-        # Đây là điểm mấu chốt: chỉ search trong Actions, KHÔNG có States
+        # --- Step 2: Search the action embedding space ---
+        # Key point: search actions only, not states
         similarities = cosine_similarity(query_vector, self.action_embeddings)[0]
         
-        # --- Bước 3: Lấy ra Top-N Actions có điểm cao nhất ---
-        # Vì chỉ có Actions trong space, không cần search_depth lớn
-        search_depth = min(top_k * 3, len(self.action_id_to_name))  # Tự động scale
+        # --- Step 3: Get the top-N actions ---
+        # Only actions are in the space, so no large search depth is needed
+        search_depth = min(top_k * 3, len(self.action_id_to_name))  # Auto-scale
         top_n_indices = np.argsort(similarities)[::-1][:search_depth]
         
-        # --- Bước 4: Tool-to-Agent Traversal ---
+        # --- Step 4: Traverse from tools to agents ---
         proposed_agents = set()
         
         for idx in top_n_indices:
@@ -111,24 +111,24 @@ class DualGuidanceMechanism:
             if not action_name:
                 continue
             
-            # Kịch bản 1: Action là một Agent
+            # Case 1: action is an agent
             if action_name in self.agent_names:
                 proposed_agents.add(action_name)
             
-            # Kịch bản 2: Action là một Tool → traverse to owner Agent
+            # Case 2: action is a tool -> map to its owner agent
             elif action_name in self.owner_map:
                 owner_agent = self.owner_map[action_name]
                 proposed_agents.add(owner_agent)
         
-        # --- Bước 5: Trả về Kết quả ---
+        # --- Step 5: Return the result ---
         return list(proposed_agents)
     
     def get_action_embedding(self, action_name: str) -> np.ndarray:
         """
-        Lấy embedding của một action cụ thể (for debugging/analysis).
+        Get the embedding for a specific action (for debugging/analysis).
         
         Args:
-            action_name: Tên của agent hoặc tool
+            action_name: Name of an agent or tool
         
         Returns:
             np.ndarray: Embedding vector
@@ -141,7 +141,7 @@ class DualGuidanceMechanism:
     
     def get_top_actions_with_scores(self, current_state: str, top_k: int = 10) -> list[tuple[str, float]]:
         """
-        Trả về top-k actions với scores (for debugging/analysis).
+        Return the top-k actions with scores (for debugging/analysis).
         
         Returns:
             List[Tuple[str, float]]: [(action_name, similarity_score), ...]

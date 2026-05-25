@@ -15,14 +15,29 @@ import json
 from pathlib import Path
 from typing import Any
 
+import matplotlib.pyplot as plt
+
 from ai.dual_system.neuro_symbolic_router import orchestrate_workflow_step
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_TRACE_ROOT = REPO_ROOT / "ai" / "data" / "workflow_traces"
 TEST_TRACE_PATH = WORKFLOW_TRACE_ROOT / "test_traces.json"
-OUTPUT_CSV_PATH = REPO_ROOT / "ai" / "results" / "real_tradeoff_metrics.csv"
+OUTPUT_CSV_PATH = REPO_ROOT / "ai" / "results" / "pareto_tradeoff_results.csv"
 EXPECTED_TEST_SIZE = 200
 TAU_VALUES = [0.50, 0.70, 0.85, 0.95, 0.99]
+
+plt.style.use("seaborn-v0_8-whitegrid")
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "axes.labelsize": 13,
+        "axes.titlesize": 15,
+        "legend.fontsize": 12,
+        "xtick.labelsize": 11,
+        "ytick.labelsize": 11,
+        "figure.titleweight": "bold",
+    }
+)
 
 _ALLOWED_SKELETONS_TO_PATHWAY: dict[tuple[str, ...], int] = {
     ("TriageAgent", "EHRAgent", "SummaryAgent"): 1,
@@ -269,6 +284,91 @@ def save_tradeoff_metrics(rows: list[dict[str, float | int]], output_path: Path)
     return resolved_path
 
 
+def plot_pareto_curve(
+    rows: list[dict[str, float | int]],
+    output_path: Path | None = None,
+) -> Path:
+    """Plot the Pareto tradeoff curve and save the figure."""
+    final_output_path = (
+        output_path
+        or Path(__file__).parent.parent / "results" / "figures" / "exp1_pareto_tradeoff.png"
+    )
+    final_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    ordered_rows = sorted(rows, key=lambda row: float(row["tau_threshold"]))
+    tau_values = [float(row["tau_threshold"]) for row in ordered_rows]
+    sys2_rates = [float(row["sys2_invocation_rate"]) for row in ordered_rows]
+    compliance_rates = [float(row["guideline_compliance_rate"]) for row in ordered_rows]
+
+    fig, ax = plt.subplots(figsize=(9, 6))
+
+    ax.plot(
+        sys2_rates,
+        compliance_rates,
+        marker="o",
+        markersize=10,
+        linestyle="-",
+        linewidth=2.5,
+        color="#1f77b4",
+        markerfacecolor="#ff7f0e",
+        markeredgewidth=2,
+        markeredgecolor="white",
+        label="Threshold Sweep Curve",
+    )
+
+    for idx, tau in enumerate(tau_values):
+        ax.annotate(
+            rf"$\tau = {tau:.2f}$",
+            (sys2_rates[idx], compliance_rates[idx]),
+            textcoords="offset points",
+            xytext=(-15, 10) if idx < len(tau_values) // 2 else (10, -15),
+            ha="center",
+            fontsize=12,
+            fontweight="bold",
+            color="#333333",
+        )
+
+    selected_tau = 0.85 if 0.85 in tau_values else tau_values[len(tau_values) // 2]
+    selected_idx = tau_values.index(selected_tau)
+    ax.axvline(x=sys2_rates[selected_idx], color="red", linestyle="--", alpha=0.5)
+    ax.axhline(y=compliance_rates[selected_idx], color="red", linestyle="--", alpha=0.5)
+    ax.scatter(
+        sys2_rates[selected_idx],
+        compliance_rates[selected_idx],
+        s=200,
+        facecolors="none",
+        edgecolors="red",
+        linewidths=2,
+        label="Selected Operating Point",
+    )
+
+    baseline_idx = 0
+    compliance_gain = compliance_rates[selected_idx] - compliance_rates[baseline_idx]
+    ax.annotate(
+        f"+{compliance_gain:.1f}% Compliance Gain",
+        xy=(sys2_rates[selected_idx], compliance_rates[selected_idx]),
+        xytext=(8, min(99.6, compliance_rates[selected_idx] + 3.0)),
+        fontsize=11,
+        color="green",
+        fontweight="bold",
+        arrowprops=dict(arrowstyle="->", linestyle="--", color="green", lw=2),
+    )
+
+    ax.set_title(r"Efficiency vs. Guideline Compliance across Confidence Thresholds ($\tau$)")
+    ax.set_xlabel(r"System 2 Invocation Rate (%) $\rightarrow$")
+    ax.set_ylabel(r"Guideline Compliance Rate (%) $\rightarrow$ ↑")
+    ax.set_ylim(max(0, min(compliance_rates) - 5), min(100, max(compliance_rates) + 2))
+    ax.set_xlim(max(-5, min(sys2_rates) - 5), min(100, max(sys2_rates) + 10))
+    ax.legend(loc="lower right")
+
+    plt.tight_layout()
+    fig.savefig(final_output_path, dpi=300)
+    plt.close(fig)
+
+    print(f"[tradeoff] Saved Pareto plot to: {final_output_path}", flush=True)
+    return final_output_path
+
+
 async def run_tradeoff_evaluation() -> list[dict[str, float | int]]:
     """Run the full tau sweep and return all metric rows."""
     traces = load_test_traces()
@@ -295,6 +395,7 @@ async def run_tradeoff_evaluation() -> list[dict[str, float | int]]:
         )
 
     save_tradeoff_metrics(rows=rows, output_path=OUTPUT_CSV_PATH)
+    plot_pareto_curve(rows=rows)
     return rows
 
 

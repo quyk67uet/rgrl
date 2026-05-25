@@ -18,6 +18,7 @@ OUTPUT:
 
 import json
 import os
+from pathlib import Path
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import modal
@@ -185,6 +186,24 @@ def evaluate_dual_encoder_model(
     print(f"✅ {model_name} EVALUATION COMPLETE")
     print("="*80)
     
+    # Persist nearest-neighbor results to JSON for downstream analysis.
+    try:
+        out_path = Path('/data') / 'wrl_nearest_neighbors.json' if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'wrl_nearest_neighbors.json'
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with out_path.open('w', encoding='utf-8') as f:
+            json.dump({
+                'model_name': model_name,
+                'results': results,
+                'metrics': {
+                    'avg_top1_similarity': float(np.mean(top1_scores)) if top1_scores else 0.0,
+                    'avg_top3_similarity': float(np.mean(top3_scores)) if top3_scores else 0.0,
+                    'avg_top5_similarity': float(np.mean(top5_scores)) if top5_scores else 0.0,
+                }
+            }, f, ensure_ascii=False, indent=2)
+        print(f"   ✓ Nearest neighbors saved to: {out_path}")
+    except Exception as exc:
+        print(f"   ⚠️  Failed to persist nearest neighbors JSON: {exc}")
+
     return {
         "model_name": model_name,
         "results": results,

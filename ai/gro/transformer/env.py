@@ -28,10 +28,9 @@ if not SINGLE_GUIDANCE_AVAILABLE and not DUAL_GUIDANCE_AVAILABLE:
 
 class ClinicalWorkflowEnv(gym.Env):
     """
-    Môi trường Mô phỏng cho VHAS, tuân thủ chuẩn Gymnasium.
-    Môi trường này là một "Cỗ máy Tra cứu" (Lookup Machine) - nó KHÔNG suy nghĩ,
-    KHÔNG có logic if/else về y tế. Nó chỉ tra cứu state transitions từ Knowledge Base
-    được biên dịch từ 2000 "dấu vết vàng".
+    Simulation env for VHAS, following Gymnasium conventions.
+    It is a lookup machine: it does not think and has no medical if/else logic.
+    It only looks up state transitions from a knowledge base built from gold traces.
     """
     metadata = {'render_modes': ['human']}
 
@@ -48,20 +47,20 @@ class ClinicalWorkflowEnv(gym.Env):
         
         print("--- Initializing ClinicalWorkflowEnv (Lookup-Based) ---")
         
-        # 1. Tải Knowledge Base với state transitions
+        # 1. Load the knowledge base with state transitions
         self.encoder = encoder_model
         with open(kb_path, 'r', encoding='utf-8') as f:
             self.knowledge_base = json.load(f)
         print(f"   Loaded KB with {len(self.knowledge_base['state_transitions'])} state transitions")
         
-        # 2. Khởi tạo Guidance Mechanism (optional)
+        # 2. Initialize the guidance mechanism (optional)
         self.guidance = None
         self.use_dual_encoder = use_dual_encoder
         
         if use_guidance and guidance_encoder_path and guidance_embedding_space_path:
             try:
                 if use_dual_encoder and DUAL_GUIDANCE_AVAILABLE and guidance_action_encoder_path:
-                    # Use Dual-Encoder Guidance
+                    # Use dual-encoder guidance
                     self.guidance = DualGuidanceMechanism(
                         state_encoder_path=guidance_encoder_path,
                         action_encoder_path=guidance_action_encoder_path,
@@ -69,7 +68,7 @@ class ClinicalWorkflowEnv(gym.Env):
                     )
                     print(f"   ✅ Dual-Encoder Guidance Mechanism initialized (Two-Tower search)")
                 elif SINGLE_GUIDANCE_AVAILABLE:
-                    # Use Single-Encoder Guidance (legacy)
+                    # Use single-encoder guidance (legacy)
                     self.guidance = GuidanceMechanism(
                         encoder_path=guidance_encoder_path,
                         embedding_space_path=guidance_embedding_space_path
@@ -85,45 +84,45 @@ class ClinicalWorkflowEnv(gym.Env):
         else:
             print(f"   ℹ️  Guidance Mechanism disabled (use_guidance={use_guidance})")
         
-        # 3. Tải expert traces từ batch folders
+        # 3. Load expert traces from batch folders
         self.all_traces_data = self._load_expert_traces(scenarios_data_dir)
         
-        # 4. Định nghĩa Không gian Hành động (Action Space)
-        # Trích xuất agent names từ traces thay vì từ AGENT_REGISTRY_SIM
+        # 4. Define the action space
+        # Extract agent names from traces instead of AGENT_REGISTRY_SIM
         self.agent_names = ['TriageAgent', 'EHRAgent', 'DispensationAgent', 'ReconciliationAgent', 'SummaryAgent']
         self.num_agents = len(self.agent_names)
         self.action_space = spaces.Discrete(self.num_agents)
         self.action_to_name = {i: name for i, name in enumerate(self.agent_names)}
         self.name_to_action = {name: i for i, name in self.action_to_name.items()}
         
-        # 5. Định nghĩa Không gian Trạng thái (Observation Space)
-        # CHANGED: Now returns sequences instead of single vectors
+        # 5. Define the observation space
+        # Changed: now returns sequences instead of single vectors
         embedding_dim = self.encoder.get_sentence_embedding_dimension()
         self.embedding_dim = embedding_dim
         self.observation_space = spaces.Box(
             low=-np.inf, 
             high=np.inf, 
-            shape=(MAX_HISTORY_LENGTH, embedding_dim),  # SEQUENCE SHAPE
+            shape=(MAX_HISTORY_LENGTH, embedding_dim),  # Sequence shape
             dtype=np.float32
         )
         
-        # 6. Các biến theo dõi của một "episode"
+        # 6. Episode tracking variables
         self._current_step = 0
-        self.current_expert_trace = None  # Chuỗi (State, Action) của chuyên gia
-        self.current_state_text = None    # State hiện tại trong episode
-        self.current_history = []  # NEW: History of (state, action) texts for Transformer
+        self.current_expert_trace = None  # Expert (state, action) sequence
+        self.current_state_text = None    # Current state in the episode
+        self.current_history = []  # History of (state, action) texts for the Transformer
         
         print(f"--- ClinicalWorkflowEnv Initialized Successfully with {len(self.all_traces_data)} traces. ---")
 
     def _load_expert_traces(self, scenarios_data_dir: str) -> list:
-        """Tải và parse tất cả traces từ batch folders."""
+        """Load and parse all traces from batch folders."""
         all_traces = []
         print(f"Loading expert traces from {scenarios_data_dir}...")
         
         if not os.path.isdir(scenarios_data_dir):
             raise FileNotFoundError(f"Directory not found at: {scenarios_data_dir}")
 
-        # Tìm các batch folders
+        # Find the batch folders
         batch_folders = sorted([f for f in os.listdir(scenarios_data_dir) 
                                if f.startswith('batch_') and os.path.isdir(os.path.join(scenarios_data_dir, f))])
         
@@ -148,7 +147,7 @@ class ClinicalWorkflowEnv(gym.Env):
         """
         # Encode all items in history
         if not self.current_history:
-            # Fallback: empty history (shouldn't happen but just in case)
+            # Fallback: empty history (should not happen)
             embeddings = np.zeros((MAX_HISTORY_LENGTH, self.embedding_dim), dtype=np.float32)
             return embeddings
         
@@ -163,10 +162,10 @@ class ClinicalWorkflowEnv(gym.Env):
         current_length = len(history_embeddings)
         
         if current_length >= MAX_HISTORY_LENGTH:
-            # Take last MAX_HISTORY_LENGTH items
+            # Keep the last MAX_HISTORY_LENGTH items
             embeddings = history_embeddings[-MAX_HISTORY_LENGTH:]
         else:
-            # Pad at beginning with zeros
+            # Pad the front with zeros
             padding = np.zeros((MAX_HISTORY_LENGTH - current_length, self.embedding_dim), dtype=np.float32)
             embeddings = np.vstack([padding, history_embeddings])
         
@@ -174,30 +173,30 @@ class ClinicalWorkflowEnv(gym.Env):
 
     def get_candidate_actions(self, current_state_text: str = None, top_k: int = 5) -> dict:
         """
-        Lấy danh sách candidate actions cho state hiện tại sử dụng Guidance Mechanism.
+        Get candidate actions for the current state using the guidance mechanism.
         
         Args:
-            current_state_text: State text để query (nếu None, dùng self.current_state_text)
-            top_k: Số lượng candidates đề xuất
+            current_state_text: State text to query (defaults to self.current_state_text)
+            top_k: Number of candidates to propose
         
         Returns:
             dict: {
                 'candidate_names': List[str],  # Agent names
-                'candidate_indices': List[int],  # Action space indices
-                'action_mask': np.ndarray  # Binary mask for action space
+                'candidate_indices': List[int],  # Action-space indices
+                'action_mask': np.ndarray  # Binary action mask
             }
         """
         state_text = current_state_text or self.current_state_text
         
         if self.guidance is None:
-            # Fallback: trả về tất cả agents với equal priority
+            # Fallback: return all agents with equal priority
             return {
                 'candidate_names': self.agent_names,
                 'candidate_indices': list(range(self.num_agents)),
                 'action_mask': np.ones(self.num_agents, dtype=bool)
             }
         
-        # Sử dụng Guidance Mechanism với Tool-to-Agent search
+        # Use the guidance mechanism with tool-to-agent search
         candidate_agent_names = self.guidance.propose_actions(state_text, top_k=top_k)
         
         # Convert candidate names to action indices
@@ -209,12 +208,12 @@ class ClinicalWorkflowEnv(gym.Env):
                 candidate_indices.append(self.name_to_action[agent_name])
                 valid_candidates.append(agent_name)
         
-        # Create action mask
+        # Create the action mask
         action_mask = np.zeros(self.num_agents, dtype=bool)
         if candidate_indices:
             action_mask[candidate_indices] = True
         else:
-            # Fallback nếu không có valid candidates
+            # Fallback if no valid candidates are found
             action_mask[:] = True
             valid_candidates = self.agent_names
             candidate_indices = list(range(self.num_agents))
@@ -228,13 +227,13 @@ class ClinicalWorkflowEnv(gym.Env):
 
 
     def reset(self, seed=None, options=None):
-        """Bắt đầu một episode mới."""
+        """Start a new episode."""
         super().reset(seed=seed)
         
-        # 1. Chọn ngẫu nhiên một trace từ "đáp án"
+        # 1. Pick a random trace from the reference set
         selected_trace = random.choice(self.all_traces_data)
         
-        # 2. Trích xuất chuỗi chuyên gia (State, Action)
+        # 2. Extract the expert (state, action) sequence
         expert_sequence = []
         for span in selected_trace['spans']:
             attrs = span.get('attributes', {})
@@ -247,11 +246,11 @@ class ClinicalWorkflowEnv(gym.Env):
         self.current_expert_trace = expert_sequence
         self._current_step = 0
         
-        # 3. Initialize history with initial state
+        # 3. Initialize history with the initial state
         self.current_state_text = self.current_expert_trace[0][0]
-        self.current_history = [self.current_state_text]  # Start with initial state
+        self.current_history = [self.current_state_text]  # Start with the initial state
         
-        # 4. Generate sequence observation
+        # 4. Generate the sequence observation
         observation = self._get_obs()
         info = {
             "current_state_text": self.current_state_text,
@@ -262,33 +261,33 @@ class ClinicalWorkflowEnv(gym.Env):
         return observation, info
 
     def step(self, action: int):
-        """Thực thi một hành động bằng cách TRA CỨU state transition trong KB."""
+        """Execute an action by looking up the state transition in the KB."""
         
         agent_name_to_call = self.action_to_name[action]
         
-        # --- BƯỚC 1: TRA CỨU STATE TRANSITION ---
+        # --- Step 1: Look up the state transition ---
         transition_key = json.dumps([self.current_state_text, agent_name_to_call], ensure_ascii=False)
         
         if transition_key in self.knowledge_base["state_transitions"]:
-            # Tìm thấy trong KB - đây là hành động đã được quan sát
+            # Found in the KB: observed action
             next_state_text = self.knowledge_base["state_transitions"][transition_key]
             status = "observed"
         else:
-            # KHÔNG tìm thấy - đây là hành động "khám phá" chưa từng thấy
+            # Not found: unseen exploratory action
             next_state_text = f"State: Unknown outcome from exploratory action '{agent_name_to_call}'."
             status = "exploratory"
         
-        # Append action and new state to history
+        # Append the action and new state to history
         self.current_history.append(f"Action: {agent_name_to_call}")
         self.current_history.append(next_state_text)
         
-        # Generate sequence observation from full history
+        # Generate the sequence observation from full history
         observation = self._get_obs()
         
-        # --- BƯỚC 2: TÍNH TOÁN REWARD ĐA THÀNH PHẦN ---
+        # --- Step 2: Compute the multi-part reward ---
         
         # 2.1. Efficiency Reward (R_eff)
-        # Giảm penalty để không khuyến khích terminate sớm
+        # Lower the penalty to avoid encouraging early termination
         time_elapsed = 2
         R_eff = -time_elapsed
         
@@ -297,11 +296,11 @@ class ClinicalWorkflowEnv(gym.Env):
         if self._current_step < len(self.current_expert_trace):
             expert_action = self.current_expert_trace[self._current_step][1]
             if agent_name_to_call == expert_action:
-                R_conf = 20  # Tăng thưởng vì tuân thủ
+                R_conf = 20  # Reward compliance
             else:
-                R_conf = -5  # Giảm phạt để khuyến khích explore
+                R_conf = -5  # Lower the penalty to encourage exploration
         
-        # Phạt cho các hành động "mò mẫm" không có trong KB
+        # Penalize exploratory actions not present in the KB
         if status == "exploratory":
             R_conf -= 15
         
@@ -312,27 +311,27 @@ class ClinicalWorkflowEnv(gym.Env):
         
         R_term = 0
         if done:
-            # Kiểm tra xem workflow có thành công không
-            # Tiêu chí thành công: kết thúc bằng SummaryAgent VÀ đi theo đúng dấu vết chuyên gia
+            # Check whether the workflow succeeded
+            # Success means ending with SummaryAgent and following the expert trace
             is_successful = (agent_name_to_call == "SummaryAgent" and 
                              self._current_step == len(self.current_expert_trace))
             
             if is_successful:
-                R_term = 300  # Tăng thưởng rất lớn khi hoàn thành xuất sắc
+                R_term = 300  # Large reward for successful completion
             else:
-                R_term = -200  # Tăng phạt nặng nếu thất bại
-                # Extra penalty cho premature termination (cheat)
+                R_term = -200  # Strong penalty for failure
+                # Extra penalty for premature termination (cheat)
                 if self._current_step < 3:
-                    R_term -= 100  # Phạt thêm nếu terminate quá sớm
+                    R_term -= 100  # Extra penalty if terminated too early
         
-        # --- TỔNG HỢP REWARD ---
-        # Định nghĩa các trọng số (adjusted for better balance)
-        w_eff = 0.1       # Tăng lại từ 0.05 -> 0.1
-        w_conf = 2.0      # Tăng từ 1.5 -> 2.0 để prioritize conformance
+        # --- Aggregate reward ---
+        # Weight settings (adjusted for better balance)
+        w_eff = 0.1       # Increased from 0.05 -> 0.1
+        w_conf = 2.0      # Increased from 1.5 -> 2.0 to prioritize conformance
         
         reward = (w_eff * R_eff) + (w_conf * R_conf) + R_term
         
-        # Cập nhật state cho bước tiếp theo
+        # Update the state for the next step
         self.current_state_text = next_state_text
         
         info = {

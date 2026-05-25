@@ -2,8 +2,8 @@
 """
 Custom Transformer-based Feature Extractor for Stable Baselines 3.
 
-This implements a history-aware policy that uses a Transformer Encoder
-to process sequences of (state, action) pairs and make context-aware decisions.
+History-aware policy extractor that uses a Transformer Encoder to process
+sequences of (state, action) pairs.
 
 Architecture:
 - Input: Batch of padded history sequences (batch_size, max_history_len, embedding_dim)
@@ -11,10 +11,10 @@ Architecture:
 - Transformer Encoder with [CLS] token strategy
 - Output: Single feature vector per sequence (batch_size, features_dim)
 
-CRITICAL FIX (v2.0):
-- Added PositionalEncoding to fix permutation-invariance issue
-- Reduced model complexity for faster training (2 layers, 4 heads, 512 FFN)
-- Fixed padding mask logic to work correctly with positional encodings
+v2.0 updates:
+- Added positional encoding
+- Reduced model size for faster training
+- Fixed padding mask handling
 """
 
 import torch
@@ -27,10 +27,9 @@ import numpy as np
 
 class PositionalEncoding(nn.Module):
     """
-    Sinusoidal Positional Encoding for Transformer.
+    Sinusoidal positional encoding for the Transformer.
     
-    Injects information about the position of tokens in the sequence.
-    Uses sine and cosine functions of different frequencies.
+    Encodes token order with sine and cosine functions.
     
     Reference: "Attention is All You Need" (Vaswani et al., 2017)
     """
@@ -38,112 +37,105 @@ class PositionalEncoding(nn.Module):
     def __init__(self, d_model: int, max_len: int = 5000, dropout: float = 0.1):
         """
         Args:
-            d_model: Embedding dimension
-            max_len: Maximum sequence length
-            dropout: Dropout probability
+            d_model: Embedding dimension.
+            max_len: Maximum sequence length.
+            dropout: Dropout rate.
         """
         super().__init__()
         self.dropout = nn.Dropout(p=dropout)
         
-        # Create positional encoding matrix
-        # Shape: (max_len, d_model)
+        # Build the positional encoding matrix.
         position = torch.arange(max_len).unsqueeze(1)  # (max_len, 1)
         div_term = torch.exp(torch.arange(0, d_model, 2) * (-math.log(10000.0) / d_model))
         
         pe = torch.zeros(max_len, d_model)
-        pe[:, 0::2] = torch.sin(position * div_term)  # Even indices
-        pe[:, 1::2] = torch.cos(position * div_term)  # Odd indices
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
         
-        # Add batch dimension: (1, max_len, d_model) for broadcasting
+        # Add batch dimension for broadcasting.
         pe = pe.unsqueeze(0)
         
-        # Register as buffer (not a parameter, but part of module state)
+        # Store as a buffer, not a trainable parameter.
         self.register_buffer('pe', pe)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Add positional encoding to input tensor.
+        Add positional encoding to the input tensor.
         
         Args:
-            x: Input tensor of shape (batch_size, seq_len, d_model)
+            x: Input tensor of shape (batch_size, seq_len, d_model).
         
         Returns:
-            Tensor with positional encoding added, same shape as input
+            Tensor with positional encoding added.
         """
-        # x shape: (batch_size, seq_len, d_model)
-        # self.pe shape: (1, max_len, d_model)
-        # Add positional encoding (broadcasts across batch dimension)
         x = x + self.pe[:, :x.size(1), :]
         return self.dropout(x)
 
 
 class TransformerFeaturesExtractor(BaseFeaturesExtractor):
     """
-    Custom feature extractor using Transformer Encoder for sequence processing.
+    Transformer-based feature extractor for sequence processing.
     
-    Uses [CLS] token strategy with positional encoding:
-    - Prepend a learnable [CLS] token to each sequence
-    - Add sinusoidal positional encodings to capture sequence order
+    Uses a [CLS] token with positional encoding:
+    - Prepend a learnable [CLS] token
+    - Add sinusoidal positional encodings
     - Pass through Transformer Encoder
-    - Extract the [CLS] token output as the sequence representation
+    - Use the [CLS] output as the sequence representation
     - Project to features_dim via linear layer
     
     Args:
-        observation_space: Gym observation space (Box with shape (max_history_len, embedding_dim))
-        features_dim: Dimension of output features (default: 256)
-        n_heads: Number of attention heads (default: 4, reduced from 8)
-        n_layers: Number of transformer layers (default: 2, reduced from 4)
-        dim_feedforward: Dimension of feedforward network (default: 512, reduced from 1024)
-        dropout: Dropout probability (default: 0.1)
+        observation_space: Gym observation space with shape (max_history_len, embedding_dim).
+        features_dim: Output feature size.
+        n_heads: Number of attention heads.
+        n_layers: Number of Transformer layers.
+        dim_feedforward: Feedforward dimension.
+        dropout: Dropout rate.
     """
     
     def __init__(
         self,
         observation_space: spaces.Box,
         features_dim: int = 256,
-        n_heads: int = 4,        # REDUCED: 8 → 4
-        n_layers: int = 2,       # REDUCED: 4 → 2
-        dim_feedforward: int = 512,  # REDUCED: 1024 → 512
+        n_heads: int = 4,
+        n_layers: int = 2,
+        dim_feedforward: int = 512,
         dropout: float = 0.1
     ):
-        # Must call parent constructor first
+        # Call the parent constructor first.
         super().__init__(observation_space, features_dim)
         
-        # Extract dimensions from observation space
-        # observation_space.shape = (max_history_len, embedding_dim)
+        # Read dimensions from the observation space.
         assert len(observation_space.shape) == 2, \
             f"Expected 2D observation space (seq_len, embed_dim), got {observation_space.shape}"
         
         self.max_history_len, self.embedding_dim = observation_space.shape
         
-        print(f"\n🔧 Initializing TransformerFeaturesExtractor (v2.0 - FIXED):")
+        print(f"\nInitializing TransformerFeaturesExtractor (v2.0):")
         print(f"   Input shape: ({self.max_history_len}, {self.embedding_dim})")
-        print(f"   Output features_dim: {features_dim}")
-        print(f"   Transformer: {n_layers} layers, {n_heads} heads (OPTIMIZED)")
-        print(f"   Feedforward dim: {dim_feedforward} (REDUCED)")
+        print(f"   Features dim: {features_dim}")
+        print(f"   Transformer: {n_layers} layers, {n_heads} heads")
+        print(f"   Feedforward dim: {dim_feedforward}")
         print(f"   Dropout: {dropout}")
         
-        # Learnable [CLS] token - this will be prepended to each sequence
-        # Shape: (1, 1, embedding_dim) for broadcasting
+        # Learnable [CLS] token.
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.embedding_dim))
         
-        # CRITICAL FIX: Add Positional Encoding
-        # Max length = max_history_len + 1 (to account for [CLS] token)
+        # Add positional encoding.
         self.pos_encoder = PositionalEncoding(
             d_model=self.embedding_dim,
             max_len=self.max_history_len + 1,
             dropout=dropout
         )
-        print(f"   ✓ Positional Encoding added (max_len={self.max_history_len + 1})")
+        print(f"   Positional encoding added (max_len={self.max_history_len + 1})")
         
-        # Transformer Encoder
+        # Transformer encoder.
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.embedding_dim,
             nhead=n_heads,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             activation='relu',
-            batch_first=True  # CRITICAL: Input shape (batch, seq, feature)
+            batch_first=True
         )
         
         self.transformer_encoder = nn.TransformerEncoder(
@@ -152,86 +144,72 @@ class TransformerFeaturesExtractor(BaseFeaturesExtractor):
             norm=nn.LayerNorm(self.embedding_dim)
         )
         
-        # Final projection layer: [CLS] output -> features_dim
+        # Final projection layer.
         self.output_projection = nn.Linear(self.embedding_dim, features_dim)
         
-        # Layer normalization for stability
+        # Layer normalization for stability.
         self.layer_norm = nn.LayerNorm(features_dim)
         
-        print(f"   ✓ TransformerFeaturesExtractor initialized")
+        print(f"   TransformerFeaturesExtractor ready")
         print(f"   Total parameters: {sum(p.numel() for p in self.parameters()):,}\n")
     
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through Transformer with positional encoding.
+        Forward pass through the Transformer.
         
         Args:
-            observations: Tensor of shape (batch_size, max_history_len, embedding_dim)
-                         Padded history sequences from environment
+            observations: Tensor of shape (batch_size, max_history_len, embedding_dim).
         
         Returns:
-            features: Tensor of shape (batch_size, features_dim)
-                     Single feature vector per sequence for policy/value heads
+            Tensor of shape (batch_size, features_dim).
         """
         batch_size = observations.shape[0]
         
-        # Validate input shape
+        # Validate the input shape.
         assert observations.shape[1:] == (self.max_history_len, self.embedding_dim), \
             f"Expected shape (batch, {self.max_history_len}, {self.embedding_dim}), got {observations.shape}"
         
-        # 1. Create padding mask BEFORE adding positional encodings
-        # CRITICAL FIX: Mask must be created from original observations (where padding = all zeros)
-        # Shape: (batch_size, max_history_len)
+        # 1. Build the padding mask before adding positional encodings.
         obs_padding_mask = (observations.sum(dim=-1) == 0)  # True for padded positions
         
-        # Create mask for [CLS] token (always False = never masked)
-        # Shape: (batch_size, 1)
+        # Mask for the [CLS] token, which is never masked.
         cls_mask = torch.zeros(batch_size, 1, dtype=torch.bool, device=observations.device)
         
-        # Concatenate to create final mask
-        # Shape: (batch_size, max_history_len + 1)
+        # Combine masks for the full sequence.
         padding_mask = torch.cat([cls_mask, obs_padding_mask], dim=1)
         
-        # 2. Prepend [CLS] token to each sequence in the batch
-        # cls_token: (1, 1, embedding_dim)
-        # Expand to: (batch_size, 1, embedding_dim)
+        # 2. Prepend the [CLS] token to each sequence.
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)
         
-        # Concatenate [CLS] with observations
-        # Result shape: (batch_size, max_history_len + 1, embedding_dim)
+        # Concatenate [CLS] with the observations.
         sequences_with_cls = torch.cat([cls_tokens, observations], dim=1)
         
-        # 3. Add positional encodings (CRITICAL FIX - THIS WAS MISSING!)
-        # This encodes the sequential order of the history
-        # Shape: (batch_size, max_history_len + 1, embedding_dim)
+        # 3. Add positional encodings.
         sequences_with_pos = self.pos_encoder(sequences_with_cls)
         
-        # 4. Pass through Transformer Encoder
-        # Output shape: (batch_size, max_history_len + 1, embedding_dim)
+        # 4. Run the Transformer encoder.
         transformer_output = self.transformer_encoder(
             sequences_with_pos,
             src_key_padding_mask=padding_mask
         )
         
-        # 5. Extract [CLS] token output (first position)
-        # Shape: (batch_size, embedding_dim)
+        # 5. Extract the [CLS] output.
         cls_output = transformer_output[:, 0, :]
         
-        # 6. Project to features_dim
-        # Shape: (batch_size, features_dim)
+        # 6. Project to the output feature size.
         features = self.output_projection(cls_output)
         
-        # 7. Layer normalization for stability
+        # 7. Normalize for stability.
         features = self.layer_norm(features)
         
         return features
 
 
-# Test function (optional, for debugging)
+# Optional test.
 if __name__ == "__main__":
     print("Testing TransformerFeaturesExtractor...")
     
-    # Create dummy observation space
+    # Create a dummy observation space.
     max_history = 20
     embed_dim = 768
     obs_space = spaces.Box(
@@ -241,21 +219,21 @@ if __name__ == "__main__":
         dtype=np.float32
     )
     
-    # Create extractor (using new default optimized hyperparameters)
+    # Create the extractor.
     extractor = TransformerFeaturesExtractor(
         observation_space=obs_space,
         features_dim=256,
-        n_heads=4,  # Updated from 8
-        n_layers=2   # Updated from 4
+        n_heads=4,
+        n_layers=2
     )
     
-    # Create dummy batch
+    # Create a dummy batch.
     batch_size = 4
     dummy_obs = torch.randn(batch_size, max_history, embed_dim)
     
-    # Forward pass
+    # Run a forward pass.
     features = extractor(dummy_obs)
     
     print(f"Input shape: {dummy_obs.shape}")
     print(f"Output shape: {features.shape}")
-    print(f"✓ Test passed!")
+    print("Test passed!")

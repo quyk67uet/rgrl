@@ -8,15 +8,15 @@ from sklearn.metrics.pairwise import cosine_similarity
 class GuidanceMechanism:
     def __init__(self, encoder_path: str, embedding_space_path: str):
         """
-        Khởi tạo cơ chế hướng dẫn bằng cách tải tất cả các tài sản cần thiết.
+        Initialize the guidance mechanism by loading all required assets.
         """
         print("--- Initializing Guidance Mechanism ---")
         
-        # 1. Tải Encoder Model đã được fine-tune
+        # 1. Load the fine-tuned encoder model
         print(f"Loading encoder model from: {encoder_path}")
         self.encoder = SentenceTransformer(encoder_path)
         
-        # 2. Tải các file từ Embedding Space
+        # 2. Load files from the embedding space
         print(f"Loading embedding space from: {embedding_space_path}")
         self.embeddings = np.load(os.path.join(embedding_space_path, 'embeddings.npy'))
         
@@ -27,50 +27,50 @@ class GuidanceMechanism:
         with open(os.path.join(embedding_space_path, 'owner_map.json'), 'r') as f:
             self.owner_map = json.load(f)
             
-        # Tạo một set các tên agent để kiểm tra nhanh
+        # Cache agent names for fast lookup
         self.agent_names = set(self.owner_map.values())
         
         print("--- Guidance Mechanism Initialized Successfully ---")
 
     def propose_actions(self, current_state: str, top_k: int = 5, search_depth: int = 20) -> list[str]:
         """
-        Implement thuật toán Tool-to-Agent Retrieval để đề xuất top-k agent.
+        Use tool-to-agent retrieval to propose top-k agents.
         
         Args:
-            current_state: Mô tả text của Trạng thái Lâm sàng hiện tại.
-            top_k: Số lượng agent cuối cùng cần đề xuất.
-            search_depth: Số lượng thực thể (agent+tool) cần truy xuất ban đầu.
+            current_state: Text description of the current clinical state.
+            top_k: Number of agents to return.
+            search_depth: Number of initial entities to retrieve.
         """
         
-        # --- Bước 1: Lấy Vector Truy vấn ---
+        # --- Step 1: Build the query vector ---
         query_vector = self.encoder.encode(current_state, convert_to_tensor=False).reshape(1, -1)
         
-        # --- Bước 2: Tìm kiếm trên Toàn bộ "Bản đồ" ---
+        # --- Step 2: Search the full embedding space ---
         similarities = cosine_similarity(query_vector, self.embeddings)[0]
         
-        # --- Bước 3: Lấy ra Top-N Ứng viên ban đầu ---
-        # Lấy ra các thực thể có điểm số cao nhất, bao gồm cả agent và tool
+        # --- Step 3: Get the initial top-N candidates ---
+        # Includes both agents and tools
         top_n_indices = np.argsort(similarities)[::-1][:search_depth]
         
-        # --- Bước 4: "Di chuyển ngược" (Traversal) và Lọc ---
+        # --- Step 4: Traverse back to agents and filter ---
         proposed_agents = set()
         
         for idx in top_n_indices:
             if len(proposed_agents) >= top_k:
-                break # Đã đủ số lượng cần thiết
+                break # Enough results
                 
             entity_name = self.id_to_name.get(str(idx))
             if not entity_name:
                 continue
             
-            # Kịch bản 1: Nếu thực thể là một Agent
+            # Case 1: the entity is an agent
             if entity_name in self.agent_names:
                 proposed_agents.add(entity_name)
             
-            # Kịch bản 2: Nếu thực thể là một Tool
+            # Case 2: the entity is a tool
             elif entity_name in self.owner_map:
                 owner_agent = self.owner_map[entity_name]
                 proposed_agents.add(owner_agent)
         
-        # --- Bước 5: Trả về Kết quả ---
+        # --- Step 5: Return the result ---
         return list(proposed_agents)
