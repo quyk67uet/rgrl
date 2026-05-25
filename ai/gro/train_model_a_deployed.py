@@ -1,28 +1,15 @@
-# train_model_a_deployed.py
+# train_model_a_dual_deployed.py
 """
-Train the VHAS Orchestrator for Model A (Base → Fine-tune) with Guidance.
-DEPLOYED MODE: Runs in background and continues if the client disconnects.
+Training script for Model A with Dual-Encoder Guidance on Modal.
 
-Usage:
-
-    modal run --detach train_model_a_deployed.py::start_training
-
-After launching, you may close your machine — training runs on Modal cloud.
-
-Check logs:
-
-    modal app logs vhas-orchestrator-model-a --follow
-
-Download results:
-
-    modal volume ls vhas-training-results
-    modal volume get vhas-training-results orchestrator_model_a_<TIMESTAMP>/ ./results_model_a/
+Model A: Base → Fine-tune with Dual-Encoder (two-tower) guidance.
 """
-
 import modal
+import sys
 from datetime import datetime
 
-app = modal.App("vhas-orchestrator-model-a")
+# --- Modal Setup ---
+app = modal.App("vhas-train-model-a-dual")
 
 # Docker image with SB3 and required dependencies
 image = (
@@ -44,160 +31,122 @@ training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missi
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
 
+# Mount volumes
+volume_mounts = {
+    "/data": training_data_vol,
+    "/models": finetuned_output_vol,
+    "/results": training_results_vol
+}
 
 @app.function(
     image=image,
-    cpu=4.0,  # MlpPolicy runs faster on CPU
-    memory=8192,  # 8GB RAM
-    timeout=14400,  # 4 hours for 1M timesteps
-    volumes={
-        "/data": training_data_vol,
-        "/models": finetuned_output_vol,
-        "/results": training_results_vol
-    }
+    gpu="T4",
+    volumes=volume_mounts,
+    timeout=18000  # 5 hours
 )
-def train_model_a(
+def train_model_a_dual(
     total_timesteps: int = 1000000,
-    top_k_guidance: int = 5,
     run_id: str = None
 ):
     """
-    Train the orchestrator for Model A (Base → Fine-tune).
-    Runs in background and continues if the client disconnects.
+    Training function for Model A using Dual-Encoder Guidance.
     """
+    import os
     import sys
+    
+    # Add repository code path (files are mounted at /data/data)
     sys.path.insert(0, '/data/data')
     
     from train_orchestrator_sb3 import train_orchestrator_baseline
     
-    print("=" * 80)
-    print("🚀 VHAS Orchestrator Training - MODEL A")
-    print("=" * 80)
-    print(f"Model: Model A (Base → Fine-tune)")
-    print(f"Total timesteps: {total_timesteps:,}")
-    print(f"Top-k guidance: {top_k_guidance}")
-    print(f"Device: cpu (MlpPolicy optimized)")
-    print(f"🌙 DEPLOYED MODE: Training will continue even if you disconnect")
-    print("=" * 80)
+    print("\n" + "="*80)
+    print("🚀 TRAINING MODEL A WITH DUAL-ENCODER GUIDANCE")
+    print("="*80)
+    print(f"   • Model: Model A (Base → Fine-tune)")
+    print(f"   • Architecture: Dual-Encoder (Two-Tower)")
+    print(f"   • StateEncoder: model_a_state_encoder")
+    print(f"   • ActionEncoder: model_a_action_encoder")
+    print(f"   • Total timesteps: {total_timesteps:,}")
+    print(f"   • Run ID: {run_id}")
+    print("="*80 + "\n")
     
-    # Set paths
-    encoder_path = "/models/model_a"
-    embedding_space_path = "/models/embedding_space_base_no_states"
+    # Set paths for Dual-Encoder
+    state_encoder_path = "/models/model_a_state_encoder"
+    action_encoder_path = "/models/model_a_action_encoder"
+    embedding_space_path = "/models/embedding_space_model_a_dual"
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
     
-    # Create a unique output folder; include run_id when provided
+    # Output directory
     if run_id:
-        output_dir = f"/results/orchestrator_model_a_{run_id}"
+        output_dir = f"/results/orchestrator_model_a_dual_{run_id}"
     else:
-        output_dir = "/results/orchestrator_model_a"
+        output_dir = f"/results/orchestrator_model_a_dual"
     
     # Train
-    try:
-        model, stats = train_orchestrator_baseline(
-            encoder_path=encoder_path,
-            embedding_space_path=embedding_space_path,
-            scenarios_data_dir=scenarios_data_dir,
-            kb_path=kb_path,
-            total_timesteps=total_timesteps,
-            output_dir=output_dir,
-            top_k_guidance=top_k_guidance,
-            device="cpu"
-        )
-        
-        # Commit results
-        training_results_vol.commit()
-        
-        print("\n" + "=" * 80)
-        print("✅ Training Complete - MODEL A")
-        print("=" * 80)
-        print(f"\nFinal Stats:")
-        print(f"  Total timesteps: {stats['total_timesteps']:,}")
-        print(f"  Episodes: {stats['episode_count']}")
-        print(f"  Final avg reward (last 100): {stats.get('final_avg_reward', 'N/A'):.2f}")
-        print(f"  Final avg length (last 100): {stats.get('final_avg_length', 'N/A'):.2f}")
-        
-        return {
-            "model": "model_a",
-            "status": "success",
-            "stats": stats,
-            "output_dir": output_dir
-        }
+    model, stats = train_orchestrator_baseline(
+        encoder_path=state_encoder_path,
+        embedding_space_path=embedding_space_path,
+        action_encoder_path=action_encoder_path,  # NEW: Pass action encoder
+        use_dual_encoder=True,  # NEW: Enable dual-encoder mode
+        scenarios_data_dir=scenarios_data_dir,
+        kb_path=kb_path,
+        output_dir=output_dir,
+        total_timesteps=total_timesteps,
+        top_k_guidance=5,
+        device='cuda'
+    )
     
-    except Exception as e:
-        print(f"\n❌ Training failed for Model A: {e}")
-        import traceback
-        traceback.print_exc()
-        
-        return {
-            "model": "model_a",
-            "status": "failed",
-            "error": str(e),
-            "output_dir": output_dir
-        }
+    # Commit results
+    training_results_vol.commit()
+    
+    print("\n" + "="*80)
+    print("✅ MODEL A DUAL-ENCODER TRAINING COMPLETE!")
+    print("="*80)
+    print(f"   Output: {output_dir}")
+    print("="*80 + "\n")
+    
+    return {
+        "status": "success",
+        "model": "A",
+        "architecture": "Dual-Encoder",
+        "output_dir": output_dir,
+        "stats": stats
+    }
 
 
-@app.function(
-    timeout=18000  # 5 hours
-)
+@app.local_entrypoint()
 def start_training(
     total_timesteps: int = 1000000,
-    top_k_guidance: int = 5,
     add_timestamp: bool = True
 ):
     """
-    Function để trigger training cho Model A.
-    Có thể tắt máy sau khi gọi function này.
+    Local entrypoint để start training job.
     """
-    # Generate run ID if timestamp requested
+    # Generate run ID
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") if add_timestamp else None
     
-    print("=" * 80)
-    print("🚀 Starting Model A Training (Background Mode)")
-    print("=" * 80)
-    print(f"\n📊 Configuration:")
-    print(f"   • Model: Model A (Base → Fine-tune)")
-    print(f"   • Timesteps: {total_timesteps:,}")
-    print(f"   • Top-k guidance: {top_k_guidance}")
-    print(f"   • CPU: 4-core (MlpPolicy optimized)")
-    print(f"   • Run ID: {run_id or 'None (will overwrite existing)'}")
-    print(f"\n🌙 BACKGROUND MODE:")
-    print(f"   • Training will continue even if you disconnect")
-    print(f"   • You can safely close terminal or shutdown computer")
-    print(f"   • Check progress later with: modal app logs vhas-orchestrator-model-a")
+    print("\n" + "="*80)
+    print("🚀 STARTING MODEL A DUAL-ENCODER TRAINING ON MODAL")
+    print("="*80)
+    print(f"   • Model: A (Chuyên khoa)")
+    print(f"   • Architecture: Dual-Encoder")
+    print(f"   • Total timesteps: {total_timesteps:,}")
+    print(f"   • Run ID: {run_id}")
+    print(f"   • GPU: T4")
+    print(f"   • Timeout: 5 hours")
+    print("="*80 + "\n")
     
-    print(f"\n🚀 Starting training...\n")
-    
-    result = train_model_a.remote(
+    # Submit job
+    result = train_model_a_dual.remote(
         total_timesteps=total_timesteps,
-        top_k_guidance=top_k_guidance,
         run_id=run_id
     )
     
-    print(f"\n" + "=" * 80)
-    print(f"✅ MODEL A TRAINING COMPLETED!")
-    print(f"=" * 80)
-    
-    if result['status'] == 'success':
-        stats = result['stats']
-        print(f"\n📊 Results:")
-        print(f"   Status: {result['status']}")
-        print(f"   Total timesteps: {stats['total_timesteps']:,}")
-        print(f"   Episodes: {stats['episode_count']}")
-        print(f"   Final avg reward: {stats.get('final_avg_reward', 0):.2f}")
-        print(f"   Final avg length: {stats.get('final_avg_length', 0):.2f}")
-        print(f"   Output: {result['output_dir']}")
-    else:
-        print(f"\n❌ Training failed: {result.get('error', 'Unknown')}")
-    
-    print(f"\n💾 Download trained model:")
-    print(f"   modal volume get vhas-training-results {result.get('output_dir', '').replace('/results/', '')} ./results_model_a/")
-    
-    return result
-
-
-# Entry point for CLI
-if __name__ == "__main__":
-    with app.run():
-        start_training.remote(total_timesteps=1000000, top_k_guidance=5)
+    print("\n" + "="*80)
+    print("✅ TRAINING JOB COMPLETE!")
+    print("="*80)
+    print(f"   Status: {result['status']}")
+    print(f"   Output: {result['output_dir']}")
+    print("="*80 + "\n")
 

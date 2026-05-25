@@ -1,23 +1,23 @@
-# train_topk_ablation_deployed.py
-"""
-Experiment: Top-K Ablation Study
-Train Model A or B with different top-k values for guidance to find optimal setting.
+# train_topk_ablation_dual_deployed.py
+"""Operational workflow compliance sensitivity study using a paired-encoder policy.
 
-Tests: k=1, k=3, k=5 (baseline)
+Evaluate the selected policy across multiple guidance thresholds to identify a
+stable operating setting.
+
+Evaluation points: k=1, k=3, k=5 (reference), k=8
 
 USAGE:
-   modal run --detach train_topk_ablation_deployed.py::start_training
-   modal run --detach train_topk_ablation_deployed.py::start_training --model-choice model_a
+   modal run --detach train_topk_ablation_dual_deployed.py::start_training
 
-   After launching, you may close your machine — training runs on Modal cloud.
+    After launching, you may close your machine — execution continues on Modal.
 """
 
 import modal
 from datetime import datetime
 
-app = modal.App("vhas-topk-ablation-experiment")
+app = modal.App("vhas-topk-ablation-dual-experiment")
 
-# Docker image with SB3 and required dependencies
+# Container image with required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -32,7 +32,7 @@ image = (
     )
 )
 
-# Volumes
+# Persistent volumes
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
@@ -49,51 +49,52 @@ training_results_vol = modal.Volume.from_name("vhas-training-results", create_if
         "/results": training_results_vol
     }
 )
-def train_with_topk(
+def train_with_topk_dual(
     top_k: int = 5,
     total_timesteps: int = 1000000,
     run_id: str = None,
-    model_choice: str = "model_b"  # NEW: model_a or model_b (default: model_b)
+    model_choice: str = "model_b"  # Selectable policy variant.
 ):
-    """
-    Train Model A or B with specific top-k value.
-    
+    """Run a single thresholded compliance evaluation for the selected policy.
+
     Args:
-        model_choice: "model_a" or "model_b" (default: model_b)
+        model_choice: selectable policy variant (default: model_b)
     """
     import sys
-    sys.path.insert(0, '/data/data')
+    sys.path.insert(0, '/data/data')  # Resolve shared inputs from the mounted data root.
     
     from train_orchestrator_sb3 import train_orchestrator_baseline
     
-    model_name = "Model A (Base → Fine-tune)" if model_choice == "model_a" else "Model B (Base → Pre-train → Fine-tune)"
-    
     print("=" * 80)
-    print(f"🧪 EXPERIMENT: Top-K={top_k} Ablation")
+    print(f"🧪 RUN: Threshold={top_k} compliance evaluation")
     print("=" * 80)
-    print(f"Model: {model_name}")
+    print(f"Policy variant: {model_choice.upper()}")
+    print(f"Controller structure: paired encoder")
     print(f"Total timesteps: {total_timesteps:,}")
-    print(f"Top-K Guidance: {top_k}")
-    print(f"Device: cpu (MlpPolicy optimized)")
+    print(f"Guidance threshold: {top_k}")
+    print(f"Device: cpu (policy execution mode)")
     print("=" * 80)
     
-    # Set paths based on model choice
-    encoder_path = f"/models/{model_choice}"
-    embedding_space_path = f"/models/embedding_space_{'base' if model_choice == 'model_a' else 'pretrained'}_no_states"
+    # Resolve artifact paths from the selected policy variant
+    state_encoder_path = f"/models/{model_choice}_state_encoder"
+    action_encoder_path = f"/models/{model_choice}_action_encoder"
+    embedding_space_path = f"/models/embedding_space_{model_choice}_dual"
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
     
-    # Output with clear naming
+    # Construct a stable output directory name
     if run_id:
-        output_dir = f"/results/topk_{top_k}_{model_choice}_{run_id}"
+        output_dir = f"/results/topk_{top_k}_{model_choice}_dual_{run_id}"
     else:
-        output_dir = f"/results/topk_{top_k}_{model_choice}"
+        output_dir = f"/results/topk_{top_k}_{model_choice}_dual"
     
-    # Train with specified top-k
+    # Execute the selected thresholded run
     try:
         model, stats = train_orchestrator_baseline(
-            encoder_path=encoder_path,
+            encoder_path=state_encoder_path,
             embedding_space_path=embedding_space_path,
+            action_encoder_path=action_encoder_path,
+            use_dual_encoder=True,
             scenarios_data_dir=scenarios_data_dir,
             kb_path=kb_path,
             total_timesteps=total_timesteps,
@@ -102,11 +103,11 @@ def train_with_topk(
             device="cpu"
         )
         
-        # Commit results
+        # Persist results to the volume
         training_results_vol.commit()
         
         print("\n" + "=" * 80)
-        print(f"✅ Training Complete - Top-K={top_k}")
+        print(f"✅ Run complete - Threshold={top_k}")
         print("=" * 80)
         print(f"\nFinal Stats:")
         print(f"  Total timesteps: {stats['total_timesteps']:,}")
@@ -115,81 +116,84 @@ def train_with_topk(
         print(f"  Final avg length: {stats.get('final_avg_length', 'N/A'):.2f}")
         
         return {
-            "experiment": f"topk_{top_k}",
-            "model": model_choice,
+            "experiment": f"topk_{top_k}_{model_choice}_dual",
             "top_k": top_k,
+            "model": model_choice,
+            "architecture": "paired-encoder",
             "status": "success",
             "stats": stats,
             "output_dir": output_dir
         }
     
     except Exception as e:
-        print(f"\n❌ Training failed for top-k={top_k}: {e}")
+        print(f"\n❌ Run failed for threshold={top_k} ({model_choice}): {e}")
         import traceback
         traceback.print_exc()
         
         return {
-            "experiment": f"topk_{top_k}",
-            "model": model_choice,
+            "experiment": f"topk_{top_k}_{model_choice}_dual",
             "top_k": top_k,
+            "model": model_choice,
+            "architecture": "paired-encoder",
             "status": "failed",
             "error": str(e)
         }
 
 
 @app.function(
-    timeout=25000  # ~7 hours for 4 parallel experiments
+    timeout=30000  # Allow headroom for four parallel runs.
 )
 def start_training(
     total_timesteps: int = 1000000,
     add_timestamp: bool = True,
-    model_choice: str = "model_b"  # model_a or model_b (default: model_b)
+    model_choice: str = "model_b"  # Selectable policy variant.
 ):
-    """
-    Start top-k ablation study with multiple k values in parallel.
-    Tests k=1,3,5 by default.
-    
+    """Launch a parallel threshold sweep for the selected policy.
+
+    Evaluation points are k=1, k=3, k=5, and k=8 by default.
+
     Args:
-        model_choice: "model_a" or "model_b" (default: model_b)
+        model_choice: selectable policy variant (default: model_b)
     """
-    topk_values = [1, 3, 5]  # Fixed: test k=1,3,5
+    topk_values = [1, 3, 5, 8]  # Evaluation thresholds for the parallel sweep.
     
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") if add_timestamp else None
     
-    model_name = "Model A (Base → Fine-tune)" if model_choice == "model_a" else "Model B (Base → Pre-train → Fine-tune)"
-    
     print("=" * 80)
-    print("🧪 ABLATION STUDY: Top-K Guidance")
+    print("🧪 STUDY: Guidance threshold sweep")
     print("=" * 80)
     print(f"\n📊 Configuration:")
-    print(f"   • Experiment: Top-K Ablation")
-    print(f"   • Model: {model_name}")
+    print(f"   • Study: threshold sweep")
+    print(f"   • Policy variant: {model_choice.upper()}")
+    print(f"   • Controller structure: paired encoder")
     print(f"   • Timesteps: {total_timesteps:,} per experiment")
-    print(f"   • Top-K values: {topk_values}")
-    print(f"   • CPU: 4-core per experiment")
+    print(f"   • Threshold values: {topk_values}")
+    print(f"   • CPU: 4 cores per run")
     print(f"   • Run ID: {run_id or 'default'}")
-    print(f"   • Parallel: {len(topk_values)} experiments")
-    print(f"\n🌙 BACKGROUND MODE: Can disconnect after launch")
+    print(f"   • Parallel: {len(topk_values)} runs")
+    print(f"   • Scope: 4 concurrent runs for k=1,3,5,8")
+    print(f"\n🌙 DETACHED MODE: You can disconnect after launch")
     
-    print(f"\n🚀 Launching {len(topk_values)} parallel experiments...\n")
+    print(f"\n🚀 Launching {len(topk_values)} parallel runs (k=1,3,5,8)...\n")
     
-    # Run all top-k experiments in parallel
+    # Run all threshold evaluations in parallel
     results = list(
-        train_with_topk.starmap(
+        train_with_topk_dual.starmap(
             [(k, total_timesteps, run_id, model_choice) for k in topk_values]
         )
     )
     
     print(f"\n" + "=" * 80)
-    print(f"✅ ALL EXPERIMENTS COMPLETE!")
+    print(f"✅ ALL RUNS COMPLETE!")
     print(f"=" * 80)
     
     # Print summary
     for result in results:
         k = result['top_k']
+        model = result.get('model', model_choice)
         status = result['status']
         
-        print(f"\n📊 Top-K={k} Results:")
+        print(f"\n📊 Threshold={k} ({model.upper()}) Results:")
         print(f"   Status: {status}")
         
         if status == 'success':
@@ -208,13 +212,13 @@ def start_training(
             folder = result['output_dir'].replace('/results/', '')
             print(f"   modal volume get vhas-training-results {folder} ./results_{folder}/")
     
-    print(f"\n📈 Compare results:")
-    print(f"   python compare_topk_results.py")
+    print(f"\n📈 Compare runs:")
+    print(f"   python compare_topk_dual_results.py")
     
     return results
 
 
-# Convenience function for single top-k test
+# Helper for a single threshold run
 @app.function(
     timeout=18000
 )
@@ -222,25 +226,24 @@ def start_single_topk(
     top_k: int = 3,
     total_timesteps: int = 1000000,
     add_timestamp: bool = True,
-    model_choice: str = "model_b"  # model_a or model_b (default: model_b)
+    model_choice: str = "model_b"  # Selectable policy variant.
 ):
-    """
-    Start training with a single top-k value (for quick tests).
-    
+    """Launch a single threshold run for quick verification.
+
     Args:
-        model_choice: "model_a" or "model_b" (default: model_b)
+        model_choice: selectable policy variant (default: model_b)
     """
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") if add_timestamp else None
     
-    model_name = "Model A" if model_choice == "model_a" else "Model B"
-    print(f"🧪 Testing single Top-K={top_k} with {model_name}")
+    print(f"🧪 Testing single threshold={top_k} ({model_choice.upper()})")
     
-    result = train_with_topk.remote(
+    result = train_with_topk_dual.remote(
         top_k=top_k,
         total_timesteps=total_timesteps,
         run_id=run_id,
         model_choice=model_choice
     )
     
-    print(f"\n✅ Experiment complete: Top-K={top_k} ({model_name})")
+    print(f"\n✅ Run complete: Threshold={top_k} ({model_choice.upper()})")
     return result
+

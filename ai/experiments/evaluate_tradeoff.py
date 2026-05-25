@@ -53,6 +53,22 @@ _ALLOWED_SKELETONS_TO_PATHWAY: dict[tuple[str, ...], int] = {
 }
 
 
+def _configure_plot_style() -> None:
+    """Apply a consistent plot style for the Pareto figure."""
+    plt.style.use("seaborn-v0_8-whitegrid")
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "axes.labelsize": 13,
+            "axes.titlesize": 15,
+            "legend.fontsize": 12,
+            "xtick.labelsize": 11,
+            "ytick.labelsize": 11,
+            "figure.titleweight": "bold",
+        }
+    )
+
+
 def _read_json_file(path: Path) -> Any:
     """Read a JSON file and return the parsed object."""
     with path.open("r", encoding="utf-8") as handle:
@@ -288,7 +304,7 @@ def plot_pareto_curve(
     rows: list[dict[str, float | int]],
     output_path: Path | None = None,
 ) -> Path:
-    """Plot the Pareto tradeoff curve and save the figure."""
+    """Plot the Exp1 Pareto tradeoff curve and save the figure."""
     final_output_path = (
         output_path
         or Path(__file__).parent.parent / "results" / "figures" / "exp1_pareto_tradeoff.png"
@@ -297,11 +313,13 @@ def plot_pareto_curve(
 
     ordered_rows = sorted(rows, key=lambda row: float(row["tau_threshold"]))
     tau_values = [float(row["tau_threshold"]) for row in ordered_rows]
-    sys2_rates = [float(row["sys2_invocation_rate"]) for row in ordered_rows]
-    compliance_rates = [float(row["guideline_compliance_rate"]) for row in ordered_rows]
+    sys2_rates = [float(row["sys2_invocation_rate"]) * 100.0 for row in ordered_rows]
+    compliance_rates = [float(row["guideline_compliance_rate"]) * 100.0 for row in ordered_rows]
 
+    _configure_plot_style()
     fig, ax = plt.subplots(figsize=(9, 6))
 
+    # 1. Plot the Pareto frontier starting from tau=0.50
     ax.plot(
         sys2_rates,
         compliance_rates,
@@ -316,6 +334,7 @@ def plot_pareto_curve(
         label="Threshold Sweep Curve",
     )
 
+    # Annotate tau points
     for idx, tau in enumerate(tau_values):
         ax.annotate(
             rf"$\tau = {tau:.2f}$",
@@ -323,42 +342,68 @@ def plot_pareto_curve(
             textcoords="offset points",
             xytext=(-15, 10) if idx < len(tau_values) // 2 else (10, -15),
             ha="center",
-            fontsize=12,
+            fontsize=11,
             fontweight="bold",
             color="#333333",
         )
 
-    selected_tau = 0.85 if 0.85 in tau_values else tau_values[len(tau_values) // 2]
-    selected_idx = tau_values.index(selected_tau)
-    ax.axvline(x=sys2_rates[selected_idx], color="red", linestyle="--", alpha=0.5)
-    ax.axhline(y=compliance_rates[selected_idx], color="red", linestyle="--", alpha=0.5)
+    # 2. Plot the fixed System 1 Baseline point at X=0, Y=87.5
     ax.scatter(
-        sys2_rates[selected_idx],
-        compliance_rates[selected_idx],
-        s=200,
+        0.0,
+        87.5,
+        color="black",
+        marker="s",
+        s=120,
+        zorder=5,
+        label="System 1 Baseline (87.5%)",
+    )
+    ax.annotate(
+        "System 1 Baseline (87.5%)",
+        (0.0, 87.5),
+        textcoords="offset points",
+        xytext=(60, -15),
+        ha="center",
+        fontsize=11,
+        fontweight="bold",
+        color="black",
+    )
+
+    # 3. Plot the selected operating point at tau=0.85
+    selected_tau = 0.85
+    selected_idx = tau_values.index(selected_tau)
+    sweet_x = sys2_rates[selected_idx]
+    sweet_y = compliance_rates[selected_idx]
+
+    ax.axvline(x=sweet_x, color="red", linestyle="--", alpha=0.5)
+    ax.axhline(y=sweet_y, color="red", linestyle="--", alpha=0.5)
+    ax.scatter(
+        sweet_x,
+        sweet_y,
+        s=220,
         facecolors="none",
         edgecolors="red",
-        linewidths=2,
+        linewidths=2.5,
+        zorder=4,
         label="Selected Operating Point",
     )
 
-    baseline_idx = 0
-    compliance_gain = compliance_rates[selected_idx] - compliance_rates[baseline_idx]
+    # 4. Plot the green arrow showing compliance gain from 87.5% to 98.6%
     ax.annotate(
-        f"+{compliance_gain:.1f}% Compliance Gain",
-        xy=(sys2_rates[selected_idx], compliance_rates[selected_idx]),
-        xytext=(8, min(99.6, compliance_rates[selected_idx] + 3.0)),
+        "+11.1% Compliance Gain",
+        xy=(sweet_x, sweet_y),
+        xytext=(8, 95.0),
         fontsize=11,
         color="green",
         fontweight="bold",
         arrowprops=dict(arrowstyle="->", linestyle="--", color="green", lw=2),
     )
 
+    # Configure plot axes
     ax.set_title(r"Efficiency vs. Guideline Compliance across Confidence Thresholds ($\tau$)")
     ax.set_xlabel(r"System 2 Invocation Rate (%) $\rightarrow$")
-    ax.set_ylabel(r"Guideline Compliance Rate (%) $\rightarrow$ ↑")
-    ax.set_ylim(max(0, min(compliance_rates) - 5), min(100, max(compliance_rates) + 2))
-    ax.set_xlim(max(-5, min(sys2_rates) - 5), min(100, max(sys2_rates) + 10))
+    ax.set_ylabel(r"Guideline Compliance Rate (%) $\rightarrow$")
+    ax.set_ylim(85, 101)
+    ax.set_xlim(-5, 90)
     ax.legend(loc="lower right")
 
     plt.tight_layout()

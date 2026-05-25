@@ -1,5 +1,14 @@
 # scripts/train_on_modal.py
-"""Script to train the encoder on Modal with GPU.
+"""Script to train a Dual-Encoder (Two-Tower) on Modal with GPU.
+
+Architecture:
+- StateEncoder: specialized for Clinical States
+- ActionEncoder: specialized for Agents and Tools
+
+Training:
+- Contrastive learning on (State, Action) pairs
+- Maximize cosine similarity between state and action embeddings
+- Loss: MultipleNegativesRankingLoss
 
 Workflow:
 1. Upload data (one-time):
@@ -8,14 +17,15 @@ Workflow:
 2. Train:
     modal run train_on_modal.py
 
-3. Download model:
-    modal volume get vhas-encoder-output pretrained_encoder ../output/pretrained_encoder
+3. Download models:
+    modal volume get vhas-encoder-output pretrained_state_encoder ../output/pretrained_state_encoder
+    modal volume get vhas-encoder-output pretrained_action_encoder ../output/pretrained_action_encoder
 """
 import modal
 import os
 
 # --- 1. Define environment ---
-app = modal.App("vhas-encoder-pretraining")
+app = modal.App("vhas-dual-encoder-pretraining")
 
 # Build image with required dependencies
 image = (
@@ -25,8 +35,8 @@ image = (
         "torch>=2.0.0",
         "tqdm>=4.65.0",
         "transformers>=4.30.0",
-        "datasets>=2.14.0",  # Required by sentence-transformers
-        "accelerate>=0.26.0"  # Required by transformers Trainer
+        "datasets>=2.14.0",
+        "accelerate>=0.26.0"
     )
 )
 
@@ -38,21 +48,24 @@ output_vol = modal.Volume.from_name("vhas-encoder-output", create_if_missing=Tru
 @app.function(
     image=image,
     gpu="T4",
-    retries=10,  # Increase retries to improve robustness against preemptions
+    retries=10,
     volumes={
         "/data": data_vol,
         "/output": output_vol
     },
     timeout=7200,
 )
-def train_encoder_on_modal(
+def train_dual_encoder_on_modal(
     batch_size: int = 128,
     num_epochs: int = 1,
     data_path: str = "/data/wrl_pretraining_examples.json"
 ):
-    """Training function that runs on Modal GPU.
+    """Train Dual Encoder on Modal GPU.
 
-    Reads data directly from the Volume (do not pass the data via arguments).
+    Training Strategy:
+    - Load base model 'all-mpnet-base-v2' as shared checkpoint
+    - Clone into two models: StateEncoder and ActionEncoder
+    - Train using contrastive loss on (State, Action) pairs
 
     Args:
         batch_size: training batch size
@@ -65,7 +78,7 @@ def train_encoder_on_modal(
     from torch.utils.data import DataLoader
     
     print("=" * 70)
-    print("🚀 Starting VHAS Encoder Pre-training on Modal GPU")
+    print("🚀 Starting VHAS Dual-Encoder Pre-training on Modal GPU")
     print("=" * 70)
     
     # Setup device
@@ -75,16 +88,7 @@ def train_encoder_on_modal(
         print(f"   GPU: {torch.cuda.get_device_name(0)}")
         print(f"   Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
     
-    # Debug: list files in /data to see what's available
-    print(f"\n🔍 Checking volume contents at /data:")
-    import os
-    if os.path.exists("/data"):
-        files = os.listdir("/data")
-        print(f"   Files found: {files}")
-    else:
-        print(f"   ⚠️  /data directory does not exist!")
-    
-    # Load training data from Volume
+    # Load training data
     print(f"\n📥 Loading training data from volume: {data_path}")
     if not os.path.exists(data_path):
         raise FileNotFoundError(
@@ -95,15 +99,19 @@ def train_encoder_on_modal(
     with open(data_path, 'r', encoding='utf-8') as f:
         examples_data = json.load(f)
     
+    # Parse examples - format: {"texts": [state, action]}
     training_examples = [InputExample(texts=ex['texts']) for ex in examples_data]
-    print(f"   ✓ Loaded {len(training_examples):,} training pairs")
+    print(f"   ✓ Loaded {len(training_examples):,} (State, Action) pairs")
     
-    # Load base model
-    print("\n🔧 Loading base model 'all-mpnet-base-v2'...")
-    encoder_model = SentenceTransformer('all-mpnet-base-v2', device=device)
-    print(f"   ✓ Model loaded with {encoder_model.get_sentence_embedding_dimension()} dimensions")
+    # Load base models
+    print("\n🔧 Loading base models 'all-mpnet-base-v2'...")
+    state_encoder = SentenceTransformer('all-mpnet-base-v2', device=device)
+    action_encoder = SentenceTransformer('all-mpnet-base-v2', device=device)
+    print(f"   ✓ StateEncoder loaded: {state_encoder.get_sentence_embedding_dimension()} dims")
+    print(f"   ✓ ActionEncoder loaded: {action_encoder.get_sentence_embedding_dimension()} dims")
     
-    # Setup training
+    # Setup training with Dual-Encoder architecture
+    # We'll use SentenceTransformers' fit() for each encoder (state first, action second)
     train_dataloader = DataLoader(
         training_examples,
         shuffle=True,
@@ -111,24 +119,35 @@ def train_encoder_on_modal(
         pin_memory=(device == "cuda")
     )
     
-    train_loss = losses.MultipleNegativesRankingLoss(model=encoder_model)
+    # Use MultipleNegativesRankingLoss - it treats first text as query (State)
+    # and second text as document (Action)
+    train_loss = losses.MultipleNegativesRankingLoss(model=state_encoder)
+    
     warmup_steps = int(len(train_dataloader) * num_epochs * 0.1)
     
     print("\n📊 Training Configuration:")
+    print(f"   • Architecture: Dual-Encoder (Two-Tower)")
+    print(f"   • StateEncoder: all-mpnet-base-v2 (768 dims)")
+    print(f"   • ActionEncoder: all-mpnet-base-v2 (768 dims)")
     print(f"   • Batch size: {batch_size}")
     print(f"   • Epochs: {num_epochs}")
     print(f"   • Steps per epoch: {len(train_dataloader):,}")
     print(f"   • Total steps: {len(train_dataloader) * num_epochs:,}")
     print(f"   • Warmup steps: {warmup_steps:,}")
-    print(f"   • Loss function: MultipleNegativesRankingLoss")
+    print(f"   • Loss function: MultipleNegativesRankingLoss (Contrastive)")
     
-    # Save config
-    output_path = "/output/pretrained_encoder"
-    os.makedirs(output_path, exist_ok=True)
+    # Save directories
+    state_encoder_path = "/output/pretrained_state_encoder"
+    action_encoder_path = "/output/pretrained_action_encoder"
+    os.makedirs(state_encoder_path, exist_ok=True)
+    os.makedirs(action_encoder_path, exist_ok=True)
     
     config = {
+        "architecture": "Dual-Encoder (Two-Tower)",
         "base_model": "all-mpnet-base-v2",
-        "loss": "MultipleNegativesRankingLoss",
+        "state_encoder": "Specialized for Clinical States",
+        "action_encoder": "Specialized for Agents and Tools",
+        "loss": "MultipleNegativesRankingLoss (Contrastive)",
         "batch_size": batch_size,
         "epochs": num_epochs,
         "warmup_steps": warmup_steps,
@@ -138,40 +157,74 @@ def train_encoder_on_modal(
         "trained_on": "Modal GPU"
     }
     
-    config_path = os.path.join(output_path, "training_config.json")
-    with open(config_path, "w") as f:
+    # Save config for both encoders
+    with open(os.path.join(state_encoder_path, "training_config.json"), "w") as f:
         json.dump(config, f, indent=2)
-    print(f"\n💾 Config saved to {config_path}")
+    with open(os.path.join(action_encoder_path, "training_config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+    print(f"\n💾 Config saved")
     
-    # Define checkpoint directory - SentenceTransformer.fit() will auto-handle resume
-    checkpoint_dir = os.path.join(output_path, "checkpoints")
+    # Checkpoint directories
+    state_checkpoint_dir = os.path.join(state_encoder_path, "checkpoints")
+    action_checkpoint_dir = os.path.join(action_encoder_path, "checkpoints")
     
-    # Train
+    # Train StateEncoder (treats first text as anchor, second as positive)
     print("\n" + "=" * 70)
-    print("🏋️  Starting Training...")
+    print("🏋️  Training StateEncoder...")
     print("=" * 70 + "\n")
     
-    encoder_model.fit(
+    state_encoder.fit(
         train_objectives=[(train_dataloader, train_loss)],
         epochs=num_epochs,
         warmup_steps=warmup_steps,
-        output_path=output_path,
+        output_path=state_encoder_path,
         show_progress_bar=True,
-        checkpoint_path=checkpoint_dir,
-        checkpoint_save_steps=200,  # Save checkpoint every 200 steps
-        checkpoint_save_total_limit=3  # Keep only the 3 most recent checkpoints
+        checkpoint_path=state_checkpoint_dir,
+        checkpoint_save_steps=200,
+        checkpoint_save_total_limit=3
     )
     
-    # Commit volume to persist outputs
+    # For ActionEncoder, swap the texts so Actions become the anchor
+    print("\n" + "=" * 70)
+    print("🏋️  Training ActionEncoder...")
+    print("=" * 70 + "\n")
+    
+    # Create swapped examples for action encoder
+    swapped_examples = [InputExample(texts=[ex.texts[1], ex.texts[0]]) for ex in training_examples]
+    swapped_dataloader = DataLoader(
+        swapped_examples,
+        shuffle=True,
+        batch_size=batch_size,
+        pin_memory=(device == "cuda")
+    )
+    
+    action_loss = losses.MultipleNegativesRankingLoss(model=action_encoder)
+    
+    action_encoder.fit(
+        train_objectives=[(swapped_dataloader, action_loss)],
+        epochs=num_epochs,
+        warmup_steps=warmup_steps,
+        output_path=action_encoder_path,
+        show_progress_bar=True,
+        checkpoint_path=action_checkpoint_dir,
+        checkpoint_save_steps=200,
+        checkpoint_save_total_limit=3
+    )
+    
+    # Commit volume to persist trained models
     output_vol.commit()
     
     print("\n" + "=" * 70)
-    print(f"✅ Training Complete! Model saved to {output_path}")
+    print(f"✅ Dual-Encoder Training Complete!")
+    print("=" * 70)
+    print(f"   StateEncoder saved to: {state_encoder_path}")
+    print(f"   ActionEncoder saved to: {action_encoder_path}")
     print("=" * 70)
     
     return {
         "status": "success",
-        "output_path": output_path,
+        "state_encoder_path": state_encoder_path,
+        "action_encoder_path": action_encoder_path,
         "num_examples": len(training_examples),
         "config": config
     }
@@ -182,23 +235,19 @@ def main(
     batch_size: int = 128,
     epochs: int = 1
 ):
-    """Entry point to run the training job.
-
-    ⚠️  DATA MUST BE UPLOADED FIRST via CLI:
-    modal volume put vhas-training-data data/wrl_pretraining_examples.json /data/wrl_pretraining_examples.json
+    """Entry point to run the dual-encoder training job.
 
     Args:
         batch_size: training batch size
         epochs: number of epochs
     """
-    # Uploaded file path inside the volume: /data/wrl_pretraining_examples.json
-    # When mounted, access it as /data/data/wrl_pretraining_examples.json inside the container
     remote_data_path = "/data/data/wrl_pretraining_examples.json"
     
     print("=" * 70)
-    print("🚀 VHAS Encoder Training on Modal")
+    print("🚀 VHAS Dual-Encoder Training on Modal")
     print("=" * 70)
     print(f"\n📊 Configuration:")
+    print(f"   • Architecture: Two-Tower (StateEncoder + ActionEncoder)")
     print(f"   • Data path: {remote_data_path}")
     print(f"   • Batch size: {batch_size}")
     print(f"   • Epochs: {epochs}")
@@ -209,9 +258,9 @@ def main(
     print(f"   modal volume put vhas-training-data <local_file> {remote_data_path}")
     
     print(f"\n🌐 Submitting training job to Modal...\n")
-    
-    # Launch training - do NOT pass data directly
-    result = train_encoder_on_modal.remote(
+
+    # Run training
+    result = train_dual_encoder_on_modal.remote(
         batch_size=batch_size,
         num_epochs=epochs,
         data_path=remote_data_path
@@ -223,9 +272,10 @@ def main(
     print(f"\n📊 Results:")
     print(f"   Status: {result['status']}")
     print(f"   Examples trained: {result['num_examples']:,}")
-    print(f"   Output: {result['output_path']}")
+    print(f"   StateEncoder: {result['state_encoder_path']}")
+    print(f"   ActionEncoder: {result['action_encoder_path']}")
     
-    print(f"\n💾 Download trained model:")
-    print(f"   modal volume get vhas-encoder-output pretrained_encoder ../output/pretrained_encoder")
-    print(f"\n💡 View all files in volume:")
-    print(f"   modal volume ls vhas-encoder-output")
+    print(f"\n💾 Download trained models:")
+    print(f"   modal volume get vhas-encoder-output pretrained_state_encoder ../output/pretrained_state_encoder")
+    print(f"   modal volume get vhas-encoder-output pretrained_action_encoder ../output/pretrained_action_encoder")
+
