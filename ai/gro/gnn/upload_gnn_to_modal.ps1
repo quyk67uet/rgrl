@@ -1,18 +1,18 @@
 # upload_gnn_to_modal.ps1
 # Upload GNN Policy files + RSL-RL source to Modal volume
 #
-# Chạy script:
+# Run:
 #   .\upload_gnn_to_modal.ps1
 #
-# YÊU CẦU:
-#   - Đang đứng trong thư mục: D:\VHAS\gro\gnn
-#   - Đã cài Modal CLI và đăng nhập
+# Requirements:
+#   - Run from: D:\VHAS\gro\gnn
+#   - Modal CLI installed and logged in
 
 Write-Host "================================================================================"
 Write-Host "UPLOADING GNN FILES + RSL-RL TO MODAL" -ForegroundColor Cyan
 Write-Host "================================================================================"
 
-# 1) Upload các file GNN core (env, wrapper, policy, vec_env, train)
+# 1) Upload core GNN files (env, wrapper, policy, vec_env, train)
 $files = @(
     @{Local="env.py";               Remote="/data/gro/gnn/env.py"},
     @{Local="wrappers.py";          Remote="/data/gro/gnn/wrappers.py"},
@@ -44,11 +44,11 @@ foreach ($file in $files) {
     }
 }
 
-# 2) Upload full thư mục rsl_rl (source code framework) lên Modal
+# 2) Upload the full rsl_rl folder to Modal
 Write-Host ""
 Write-Host "Uploading RSL-RL framework directory..." -ForegroundColor Yellow
 
-# Đường dẫn local tới repo rsl_rl (từ gro/gnn đi lên 2 cấp)
+# Local path to the rsl_rl repo (two levels up from gro/gnn)
 $rslLocal = "..\..\rsl_rl"
 $rslRemote = "/data/rsl_rl"
 
