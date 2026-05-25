@@ -24,6 +24,7 @@ Download results:
 
 import modal
 from datetime import datetime
+from pathlib import Path
 
 app = modal.App("vhas-orchestrator-gnn")
 
@@ -54,6 +55,17 @@ image = (
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
+
+
+def _resolve_stage2_policies_root() -> Path:
+    """Return the stage-2 policy artifact root for Modal or local execution."""
+    modal_models_root = Path("/models")
+    if modal_models_root.exists():
+        return modal_models_root / "stage2_gro_policies"
+    return Path(__file__).resolve().parents[2] / "models" / "stage2_gro_policies"
+
+
+CANONICAL_GNN_CHECKPOINT = _resolve_stage2_policies_root() / "vhas_gnn_afan_best.pt"
 
 
 @app.function(
@@ -173,6 +185,7 @@ def train_gnn(
     log_dir = f"/results/gnn_{output_stub}"
 
     print(f"\n📁 Log & checkpoint directory: {log_dir}")
+    print(f"📦 Canonical checkpoint path: {CANONICAL_GNN_CHECKPOINT}")
 
     try:
         runner = train_vhas_gnn(
@@ -211,6 +224,7 @@ def train_gnn(
             "num_envs": num_envs,
             "num_steps_per_env": num_steps_per_env,
             "log_dir": log_dir,
+            "final_checkpoint_path": str(CANONICAL_GNN_CHECKPOINT),
         }
 
     except Exception as e:
@@ -224,6 +238,7 @@ def train_gnn(
             "status": "failed",
             "error": str(e),
             "log_dir": log_dir,
+            "final_checkpoint_path": str(CANONICAL_GNN_CHECKPOINT),
         }
 
 

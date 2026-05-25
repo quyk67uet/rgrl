@@ -1,6 +1,6 @@
 # scripts/run_finetuning_jobs_dual_corrected.py
 """
-CORRECTED: Dual-Encoder Fine-tuning với logic đúng.
+CORRECTED: Dual-Encoder fine-tuning with aligned artifact paths.
 
 KIẾN TRÚC:
 - ActionEncoder: Base → Pre-train (ADP+T1) → Fine-tune (Clinical)
@@ -19,17 +19,29 @@ WORKFLOW:
    modal run run_finetuning_jobs_dual_corrected.py
 
 3. Download models:
-   modal volume get vhas-finetuned-output model_a_state_encoder ../output/model_a_state_encoder
-   modal volume get vhas-finetuned-output model_a_action_encoder ../output/model_a_action_encoder
-   modal volume get vhas-finetuned-output model_b_state_encoder ../output/model_b_state_encoder
-   modal volume get vhas-finetuned-output model_b_action_encoder ../output/model_b_action_encoder
+    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/state_encoder ../output/model_a_finetune_only/state_encoder
+    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/action_encoder ../output/model_a_finetune_only/action_encoder
+    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/state_encoder ../output/model_b_pretrained/state_encoder
+    modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/action_encoder ../output/model_b_pretrained/action_encoder
 """
 import os
+from pathlib import Path
 
 import modal
 
 BASE_MODEL_NAME = "all-mpnet-base-v2"
 DEFAULT_FINETUNING_DATA_PATH = "/data/finetuning/wrl_finetuning_examples.json"
+
+
+def _resolve_stage1_output_root() -> Path:
+    """Return the stage-1 model artifact root for Modal or local execution."""
+    modal_output_root = Path("/output")
+    if modal_output_root.exists():
+        return modal_output_root
+    return Path(__file__).resolve().parents[4] / "models"
+
+
+STAGE1_OUTPUT_ROOT = _resolve_stage1_output_root()
 
 # --- 1. Định nghĩa Môi trường ---
 app = modal.App("vhas-dual-encoder-finetuning-corrected")
@@ -131,8 +143,8 @@ def finetune_model_a_dual_corrected(
     print(f"   • Steps per epoch: {len(state_dataloader):,}")
     print(f"   • Warmup steps: {warmup_steps:,}")
     
-    state_output_path = "/output/model_a_state_encoder"
-    os.makedirs(state_output_path, exist_ok=True)
+    state_output_path = STAGE1_OUTPUT_ROOT / "stage1_wrl_encoders" / "model_a_finetune_only" / "state_encoder"
+    state_output_path.mkdir(parents=True, exist_ok=True)
     
     state_encoder.fit(
         train_objectives=[(state_dataloader, state_loss)],
@@ -140,7 +152,7 @@ def finetune_model_a_dual_corrected(
         warmup_steps=warmup_steps,
         output_path=state_output_path,
         show_progress_bar=True,
-        checkpoint_path=os.path.join(state_output_path, "checkpoints"),
+        checkpoint_path=state_output_path / "checkpoints",
         checkpoint_save_steps=100,
         checkpoint_save_total_limit=2
     )
@@ -168,8 +180,8 @@ def finetune_model_a_dual_corrected(
     print(f"   • Steps per epoch: {len(action_dataloader):,}")
     print(f"   • Warmup steps: {warmup_steps:,}")
     
-    action_output_path = "/output/model_a_action_encoder"
-    os.makedirs(action_output_path, exist_ok=True)
+    action_output_path = STAGE1_OUTPUT_ROOT / "stage1_wrl_encoders" / "model_a_finetune_only" / "action_encoder"
+    action_output_path.mkdir(parents=True, exist_ok=True)
     
     action_encoder.fit(
         train_objectives=[(action_dataloader, action_loss)],
@@ -177,7 +189,7 @@ def finetune_model_a_dual_corrected(
         warmup_steps=warmup_steps,
         output_path=action_output_path,
         show_progress_bar=True,
-        checkpoint_path=os.path.join(action_output_path, "checkpoints"),
+        checkpoint_path=action_output_path / "checkpoints",
         checkpoint_save_steps=100,
         checkpoint_save_total_limit=2
     )
@@ -200,9 +212,9 @@ def finetune_model_a_dual_corrected(
         "epochs": num_epochs
     }
     
-    with open(os.path.join(state_output_path, "training_config.json"), "w") as f:
+    with open(state_output_path / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)
-    with open(os.path.join(action_output_path, "training_config.json"), "w") as f:
+    with open(action_output_path / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)
     
     output_vol.commit()
@@ -307,8 +319,8 @@ def finetune_model_b_dual_corrected(
     print(f"   • Steps per epoch: {len(state_dataloader):,}")
     print(f"   • Warmup steps: {warmup_steps:,}")
     
-    state_output_path = "/output/model_b_state_encoder"
-    os.makedirs(state_output_path, exist_ok=True)
+    state_output_path = STAGE1_OUTPUT_ROOT / "stage1_wrl_encoders" / "model_b_pretrained" / "state_encoder"
+    state_output_path.mkdir(parents=True, exist_ok=True)
     
     state_encoder.fit(
         train_objectives=[(state_dataloader, state_loss)],
@@ -316,7 +328,7 @@ def finetune_model_b_dual_corrected(
         warmup_steps=warmup_steps,
         output_path=state_output_path,
         show_progress_bar=True,
-        checkpoint_path=os.path.join(state_output_path, "checkpoints"),
+        checkpoint_path=state_output_path / "checkpoints",
         checkpoint_save_steps=100,
         checkpoint_save_total_limit=2
     )
@@ -343,8 +355,8 @@ def finetune_model_b_dual_corrected(
     print(f"   • Steps per epoch: {len(action_dataloader):,}")
     print(f"   • Warmup steps: {warmup_steps:,}")
     
-    action_output_path = "/output/model_b_action_encoder"
-    os.makedirs(action_output_path, exist_ok=True)
+    action_output_path = STAGE1_OUTPUT_ROOT / "stage1_wrl_encoders" / "model_b_pretrained" / "action_encoder"
+    action_output_path.mkdir(parents=True, exist_ok=True)
     
     action_encoder.fit(
         train_objectives=[(action_dataloader, action_loss)],
@@ -352,7 +364,7 @@ def finetune_model_b_dual_corrected(
         warmup_steps=warmup_steps,
         output_path=action_output_path,
         show_progress_bar=True,
-        checkpoint_path=os.path.join(action_output_path, "checkpoints"),
+        checkpoint_path=action_output_path / "checkpoints",
         checkpoint_save_steps=100,
         checkpoint_save_total_limit=2
     )
@@ -375,9 +387,9 @@ def finetune_model_b_dual_corrected(
         "epochs": num_epochs
     }
     
-    with open(os.path.join(state_output_path, "training_config.json"), "w") as f:
+    with open(state_output_path / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)
-    with open(os.path.join(action_output_path, "training_config.json"), "w") as f:
+    with open(action_output_path / "training_config.json", "w") as f:
         json.dump(config, f, indent=2)
     
     output_vol.commit()
@@ -438,8 +450,8 @@ def main():
     print(f"     - ActionEncoder: {result_b['action_path']}")
     
     print(f"\n💾 Download models:")
-    print(f"   modal volume get vhas-finetuned-output model_a_state_encoder ../output/model_a_state_encoder")
-    print(f"   modal volume get vhas-finetuned-output model_a_action_encoder ../output/model_a_action_encoder")
-    print(f"   modal volume get vhas-finetuned-output model_b_state_encoder ../output/model_b_state_encoder")
-    print(f"   modal volume get vhas-finetuned-output model_b_action_encoder ../output/model_b_action_encoder")
+    print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/state_encoder ../output/model_a_finetune_only/state_encoder")
+    print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_a_finetune_only/action_encoder ../output/model_a_finetune_only/action_encoder")
+    print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/state_encoder ../output/model_b_pretrained/state_encoder")
+    print(f"   modal volume get vhas-finetuned-output stage1_wrl_encoders/model_b_pretrained/action_encoder ../output/model_b_pretrained/action_encoder")
 

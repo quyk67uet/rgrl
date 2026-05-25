@@ -23,6 +23,7 @@ Download results:
 
 import modal
 from datetime import datetime
+from pathlib import Path
 
 app = modal.App("vhas-orchestrator-transformer")
 
@@ -45,6 +46,14 @@ image = (
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
+
+
+def _resolve_stage2_policy_artifact_path(filename: str) -> Path:
+    """Return the stage-2 policy artifact path for Modal or local execution."""
+    modal_models_root = Path("/models")
+    if modal_models_root.exists():
+        return modal_models_root / "stage2_gro_policies" / filename
+    return Path(__file__).resolve().parents[2] / "models" / "stage2_gro_policies" / filename
 
 
 @app.function(
@@ -88,6 +97,7 @@ def train_transformer(
     embedding_space_path = "/models/embedding_space_base_no_states"
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
+    final_model_path = _resolve_stage2_policy_artifact_path("vhas_transformer_policy.zip")
     
     # Create a unique output folder when run_id is provided.
     if run_id:
@@ -104,6 +114,7 @@ def train_transformer(
             kb_path=kb_path,
             total_timesteps=total_timesteps,
             output_dir=output_dir,
+            final_model_path=final_model_path,
             top_k_guidance=top_k_guidance,
             device="cuda"  # Use GPU
         )
@@ -135,7 +146,8 @@ def train_transformer(
             "model": "transformer",
             "status": "success",
             "stats": stats,
-            "output_dir": output_dir
+            "output_dir": output_dir,
+            "final_model_path": str(final_model_path)
         }
     
     except Exception as e:
@@ -147,7 +159,8 @@ def train_transformer(
             "model": "transformer",
             "status": "failed",
             "error": str(e),
-            "output_dir": output_dir
+            "output_dir": output_dir,
+            "final_model_path": str(final_model_path)
         }
 
 
@@ -231,6 +244,7 @@ def start_training(
     
     print(f"\n💾 Download the trained model:")
     print(f"   modal volume get vhas-training-results {result.get('output_dir', '').replace('/results/', '')} ./results_transformer/")
+    print(f"   Final model artifact: {result.get('final_model_path')}")
     
     return result
 
