@@ -1,20 +1,22 @@
 # train_no_guidance_model_b_deployed.py
 """
-Experiment: Training Model B WITHOUT Guidance (Ablation Study)
-DEPLOYED MODE - chạy background không bị cancel khi tắt máy.
+Experiment: Train Model B WITHOUT Guidance (Ablation Study).
+DEPLOYED MODE: Runs in background and continues if the client disconnects.
 
-USAGE:
-   modal run --detach train_no_guidance_model_b_deployed.py::start_training
+Usage:
 
-   Sau khi chạy lệnh trên, BẠN CÓ THỂ TẮT MÁY NGAY.
-   Training sẽ chạy trên Modal cloud.
+    modal run --detach train_no_guidance_model_b_deployed.py::start_training
 
-Kiểm tra logs:
-   modal app logs vhas-no-guidance-model-b --follow
+After launching, you may close your machine — training runs on Modal cloud.
 
-Download kết quả:
-   modal volume ls vhas-training-results
-   modal volume get vhas-training-results no_guidance_model_b_<TIMESTAMP>/ ./results_no_guidance_model_b/
+Check logs:
+
+    modal app logs vhas-no-guidance-model-b --follow
+
+Download results:
+
+    modal volume ls vhas-training-results
+    modal volume get vhas-training-results no_guidance_model_b_<TIMESTAMP>/ ./results_no_guidance_model_b/
 """
 
 import modal
@@ -22,7 +24,7 @@ from datetime import datetime
 
 app = modal.App("vhas-no-guidance-model-b")
 
-# Image với SB3 và dependencies
+# Docker image with SB3 and required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -37,7 +39,7 @@ image = (
     )
 )
 
-# Volumes
+# Volumes mounted into the container
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
@@ -59,7 +61,7 @@ def train_model_b_no_guidance(
     run_id: str = None
 ):
     """
-    Train Model B without guidance mechanism.
+    Train Model B without the guidance mechanism (ablation baseline).
     """
     import sys
     sys.path.insert(0, '/data/data')
@@ -81,7 +83,7 @@ def train_model_b_no_guidance(
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
     
-    # Output with clear naming
+    # Output directory with clear naming
     if run_id:
         output_dir = f"/results/no_guidance_model_b_{run_id}"
     else:
@@ -142,8 +144,8 @@ def start_training(
     add_timestamp: bool = True
 ):
     """
-    Function để trigger training cho Model B without guidance.
-    Có thể tắt máy sau khi gọi function này.
+    Trigger function to start training for Model B without guidance.
+    Training continues even if the client disconnects.
     """
     # Generate run ID if timestamp requested
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") if add_timestamp else None

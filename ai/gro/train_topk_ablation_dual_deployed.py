@@ -9,7 +9,7 @@ Tests: k=1, k=3, k=5 (baseline)
 USAGE:
    modal run --detach train_topk_ablation_dual_deployed.py::start_training
 
-   Có thể tắt máy sau khi chạy lệnh trên.
+    After launching, you may close your machine — training runs on Modal cloud.
 """
 
 import modal
@@ -17,7 +17,7 @@ from datetime import datetime
 
 app = modal.App("vhas-topk-ablation-dual-experiment")
 
-# Image với SB3 và dependencies
+# Docker image with SB3 and required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(

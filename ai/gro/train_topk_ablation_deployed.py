@@ -9,7 +9,7 @@ USAGE:
    modal run --detach train_topk_ablation_deployed.py::start_training
    modal run --detach train_topk_ablation_deployed.py::start_training --model-choice model_a
 
-   Có thể tắt máy sau khi chạy lệnh trên.
+   After launching, you may close your machine — training runs on Modal cloud.
 """
 
 import modal
@@ -17,7 +17,7 @@ from datetime import datetime
 
 app = modal.App("vhas-topk-ablation-experiment")
 
-# Image với SB3 và dependencies
+# Docker image with SB3 and required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -143,7 +143,7 @@ def train_with_topk(
 def start_training(
     total_timesteps: int = 1000000,
     add_timestamp: bool = True,
-    model_choice: str = "model_b"  # NEW: model_a or model_b (default: model_b)
+    model_choice: str = "model_b"  # model_a or model_b (default: model_b)
 ):
     """
     Start top-k ablation study with multiple k values in parallel.
@@ -222,7 +222,7 @@ def start_single_topk(
     top_k: int = 3,
     total_timesteps: int = 1000000,
     add_timestamp: bool = True,
-    model_choice: str = "model_b"  # NEW: model_a or model_b (default: model_b)
+    model_choice: str = "model_b"  # model_a or model_b (default: model_b)
 ):
     """
     Start training with a single top-k value (for quick tests).

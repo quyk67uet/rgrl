@@ -2,7 +2,7 @@
 """
 Training script for Model A with Dual-Encoder Guidance on Modal.
 
-Model A: Base → Fine-tune (Chuyên khoa) với Dual-Encoder
+Model A: Base → Fine-tune with Dual-Encoder (two-tower) guidance.
 """
 import modal
 import sys
@@ -11,7 +11,7 @@ from datetime import datetime
 # --- Modal Setup ---
 app = modal.App("vhas-train-model-a-dual")
 
-# Image với SB3 và dependencies
+# Docker image with SB3 and required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -26,7 +26,7 @@ image = (
     )
 )
 
-# Volumes
+# Volumes mounted into the container
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
@@ -49,12 +49,12 @@ def train_model_a_dual(
     run_id: str = None
 ):
     """
-    Training function cho Model A với Dual-Encoder Guidance.
+    Training function for Model A using Dual-Encoder Guidance.
     """
     import os
     import sys
     
-    # Add paths (all files in /data/data/)
+    # Add repository code path (files are mounted at /data/data)
     sys.path.insert(0, '/data/data')
     
     from train_orchestrator_sb3 import train_orchestrator_baseline
