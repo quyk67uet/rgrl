@@ -47,20 +47,20 @@ def make_env(
     device: str = "cuda"
 ):
     """
-    Factory function to create a wrapped ClinicalWorkflowEnv.
-    
-    This function:
-    1. Loads the SentenceTransformer encoder
-    2. Creates ClinicalWorkflowEnv (returns HeteroData)
-    3. Wraps with VHAS_GNN_Wrapper (converts HeteroData → TensorDict)
-    
+    Build a wrapped ClinicalWorkflowEnv.
+
+    Steps:
+    1. Load the SentenceTransformer encoder
+    2. Create ClinicalWorkflowEnv (HeteroData output)
+    3. Wrap it with VHAS_GNN_Wrapper (HeteroData -> TensorDict)
+
     Returns:
-        VHAS_GNN_Wrapper: Environment compatible with RSL-RL
+        VHAS_GNN_Wrapper: RSL-RL compatible env
     """
     # Load encoder
     encoder = SentenceTransformer(encoder_path, device=device)
     
-    # Create base environment (returns HeteroData observations)
+    # Create base env (returns HeteroData observations)
     raw_env = ClinicalWorkflowEnv(
         encoder_model=encoder,
         scenarios_data_dir=scenarios_data_dir,
@@ -72,11 +72,11 @@ def make_env(
         device=device
     )
     
-    # Wrap to convert HeteroData → TensorDict (for RSL-RL compatibility)
+    # Wrap to convert HeteroData -> TensorDict for RSL-RL
     wrapped_env = VHAS_GNN_Wrapper(
         env=raw_env,
-        max_nodes=50,  # Maximum nodes per type (padding size)
-        max_edges=100,  # Maximum edges per type (padding size)
+        max_nodes=50,  # Max nodes per type (padding)
+        max_edges=100,  # Max edges per type (padding)
         embedding_dim=encoder.get_sentence_embedding_dimension()
     )
     
@@ -92,21 +92,21 @@ def train_vhas_gnn(
     guidance_embedding_space_path: str = None,
     
     # Training hyperparameters
-    num_envs: int = 1,  # Start with 1 for debugging, can scale up
-    num_steps_per_env: int = 256,  # Steps per rollout (reduced for faster testing)
+    num_envs: int = 1,  # Start with 1 for debugging
+    num_steps_per_env: int = 256,  # Steps per rollout
     max_iterations: int = 500,  # Total training iterations
     
-    # PPO hyperparameters (optimized for stability and exploration)
-    learning_rate: float = 1e-4,  # Reduced from 3e-4 for better stability
+    # PPO hyperparameters (tuned for stability and exploration)
+    learning_rate: float = 1e-4,  # Lower than 3e-4 for stability
     num_learning_epochs: int = 5,
     num_mini_batches: int = 4,
     clip_param: float = 0.2,
     gamma: float = 0.99,
     lam: float = 0.95,
-    value_loss_coef: float = 0.5,  # Reduced from 1.0 to prevent value loss explosion
-    entropy_coef: float = 0.02,  # INCREASED from 0.01 to 0.02 for better exploration
+    value_loss_coef: float = 0.5,  # Lowered to avoid value loss spikes
+    entropy_coef: float = 0.02,  # Raised for better exploration
     
-    # GNN Policy hyperparameters
+    # GNN policy hyperparameters
     actor_hidden_dims: list = None,
     critic_hidden_dims: list = None,
     
@@ -121,30 +121,30 @@ def train_vhas_gnn(
 ):
     """
     Main training function for GNN-based VHAS Orchestrator.
-    
+
     Args:
-        encoder_path: Path to SentenceTransformer model
-        scenarios_data_dir: Directory containing expert traces
-        kb_path: Path to simulation knowledge base
-        guidance_encoder_path: Path to finetuned encoder for guidance (optional)
-        guidance_embedding_space_path: Path to embedding space for guidance (optional)
+        encoder_path: Path to the SentenceTransformer model
+        scenarios_data_dir: Directory with expert traces
+        kb_path: Path to the simulation knowledge base
+        guidance_encoder_path: Optional guidance encoder path
+        guidance_embedding_space_path: Optional guidance embedding path
         num_envs: Number of parallel environments
-        num_steps_per_env: Steps collected per environment per iteration
+        num_steps_per_env: Steps per env per iteration
         max_iterations: Total training iterations
-        learning_rate: Learning rate for PPO
-        num_learning_epochs: Number of epochs per PPO update
-        num_mini_batches: Number of mini-batches per epoch
-        clip_param: PPO clipping parameter
+        learning_rate: PPO learning rate
+        num_learning_epochs: PPO epochs per update
+        num_mini_batches: Mini-batches per epoch
+        clip_param: PPO clip parameter
         gamma: Discount factor
         lam: GAE lambda
-        value_loss_coef: Coefficient for value loss
-        entropy_coef: Coefficient for entropy bonus
-        actor_hidden_dims: Hidden layer sizes for actor MLP head
-        critic_hidden_dims: Hidden layer sizes for critic MLP head
-        use_guidance: Whether to use guidance for action masking
-        top_k_guidance: Number of top actions from guidance
-        log_dir: Directory for logs and checkpoints
-        experiment_name: Name for this experiment
+        value_loss_coef: Value loss weight
+        entropy_coef: Entropy bonus weight
+        actor_hidden_dims: Actor MLP hidden sizes
+        critic_hidden_dims: Critic MLP hidden sizes
+        use_guidance: Enable action masking guidance
+        top_k_guidance: Top-k guidance actions
+        log_dir: Log and checkpoint directory
+        experiment_name: Experiment name
         device: Device to use ('cuda' or 'cpu')
     """
     
@@ -159,13 +159,13 @@ def train_vhas_gnn(
     print(f"Guidance: {'ENABLED' if use_guidance else 'DISABLED'}")
     print("=" * 80)
     
-    # Set default hidden dimensions if not provided
+    # Set default hidden dimensions if needed
     if actor_hidden_dims is None:
         actor_hidden_dims = [256, 256]
     if critic_hidden_dims is None:
         critic_hidden_dims = [256, 256]
     
-    # Generate experiment name if not provided
+    # Generate an experiment name if needed
     if experiment_name is None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         experiment_name = f"vhas_gnn_{timestamp}"
@@ -175,11 +175,11 @@ def train_vhas_gnn(
         log_dir = f"logs/{experiment_name}"
     os.makedirs(log_dir, exist_ok=True)
     
-    # --- 1. CREATE VECTORIZED ENVIRONMENT ---
+    # --- 1. Create vectorized environment ---
     print("\n🏗️  Creating vectorized environment...")
     
     def env_factory():
-        """Factory function that creates a single wrapped VHAS environment."""
+        """Build one wrapped VHAS environment."""
         return make_env(
             encoder_path=encoder_path,
             scenarios_data_dir=scenarios_data_dir,
@@ -191,12 +191,12 @@ def train_vhas_gnn(
             device=device
         )
     
-    # Create VHAS_VecEnv wrapper (implements RSL-RL's VecEnv interface)
+    # Create VHAS_VecEnv wrapper (RSL-RL VecEnv interface)
     env = VHAS_VecEnv(
         env_fn=env_factory,
         num_envs=num_envs,
         device=device,
-        max_episode_length=20  # Maximum steps per episode
+        max_episode_length=20  # Max steps per episode
     )
     
     print(f"   ✓ VecEnv created successfully")
@@ -205,22 +205,22 @@ def train_vhas_gnn(
     print(f"   • Max episode length: {env.max_episode_length}")
     print(f"   • Device: {env.device}")
 
-    # --- 2. CREATE TRAINING CONFIGURATION ---
+    # --- 2. Create training config ---
     print("\n⚙️  Creating training configuration...")
     
-    # Get observation keys from the vectorized environment
+    # Get observation keys from the vectorized env
     sample_obs = env.get_observations()
     obs_keys = list(sample_obs.keys())
     
     train_cfg = {
         # Observation groups (RSL-RL requirement)
-        # Specify which observation keys are used for policy vs critic
+        # Choose keys for policy vs critic
         "obs_groups": {
-            "policy": obs_keys,  # Use all observation keys for policy
-            "critic": obs_keys   # Use all observation keys for critic
+            "policy": obs_keys,  # Use all keys for policy
+            "critic": obs_keys   # Use all keys for critic
         },
         
-        # Algorithm configuration (PPO)
+        # Algorithm config (PPO)
         "algorithm": {
             "class_name": "rsl_rl.algorithms.PPO",
             "learning_rate": learning_rate,
@@ -240,21 +240,21 @@ def train_vhas_gnn(
             "symmetry_cfg": None  # No symmetry augmentation
         },
         
-        # Policy configuration (GNN)
-        # Lưu ý: OnPolicyRunner sẽ gọi:
+        # Policy config (GNN)
+        # OnPolicyRunner calls:
         #   ActorCriticGNN(obs, obs_groups, env.num_actions, **policy_cfg)
-        # nên KHÔNG truyền lại num_actions / num_actor_obs / num_critic_obs ở đây
+        # so do not pass num_actions / num_actor_obs / num_critic_obs here
         "policy": {
-            "class_name": "actor_critic_gnn.ActorCriticGNN",  # trỏ tới custom GNN policy
+            "class_name": "actor_critic_gnn.ActorCriticGNN",  # Custom GNN policy
             "actor_hidden_dims": actor_hidden_dims,
             "critic_hidden_dims": critic_hidden_dims,
             "activation": "elu",
         },
         
-        # Runner configuration
+        # Runner config
         "num_steps_per_env": num_steps_per_env,
         "max_iterations": max_iterations,
-        "save_interval": 50,  # Save checkpoint every 50 iterations
+        "save_interval": 50,  # Save a checkpoint every 50 iters
         "experiment_name": experiment_name,
             "run_name": ""
         }
@@ -268,7 +268,7 @@ def train_vhas_gnn(
     print(f"   • Actor hidden dims: {actor_hidden_dims}")
     print(f"   • Critic hidden dims: {critic_hidden_dims}")
     
-    # --- 3. CREATE RSL-RL RUNNER ---
+    # --- 3. Create RSL-RL runner ---
     print("\n🤖 Initializing OnPolicyRunner...")
     
     try:
@@ -289,7 +289,7 @@ def train_vhas_gnn(
         traceback.print_exc()
         raise
     
-    # --- 4. START TRAINING ---
+    # --- 4. Start training ---
     print("\n" + "=" * 80)
     print("🎮 STARTING TRAINING")
     print("=" * 80)
@@ -324,18 +324,18 @@ def train_vhas_gnn(
 
 if __name__ == "__main__":
     # Example usage - adjust paths as needed
-    
-    # For local testing
+
+    # Local testing
     train_vhas_gnn(
         encoder_path='all-mpnet-base-v2',  # Use base model
         scenarios_data_dir='../data/scenarios/data',
         kb_path='../data/simulation_kb.json',
-        guidance_encoder_path=None,  # Set to actual path if available
-        guidance_embedding_space_path=None,  # Set to actual path if available
+        guidance_encoder_path=None,  # Set an actual path if available
+        guidance_embedding_space_path=None,  # Set an actual path if available
         use_guidance=False,  # Disable for initial testing
-        num_envs=1,  # Single environment for debugging
+        num_envs=1,  # Single env for debugging
         num_steps_per_env=1024,
-        max_iterations=10,  # Just 10 iterations for testing
+        max_iterations=10,  # Only 10 iterations for testing
         learning_rate=3e-4,
         device='cuda' if torch.cuda.is_available() else 'cpu'
     )

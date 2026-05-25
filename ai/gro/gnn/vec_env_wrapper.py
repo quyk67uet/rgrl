@@ -23,7 +23,7 @@ from rsl_rl.env import VecEnv
 
 class VHAS_VecEnv(VecEnv):
     """
-    A custom VecEnv wrapper for VHAS clinical workflow environments.
+    Custom VecEnv wrapper for VHAS clinical workflow envs.
     
     This class:
     1. Manages multiple VHAS_GNN_Wrapper instances in parallel (or serial)
@@ -64,7 +64,7 @@ class VHAS_VecEnv(VecEnv):
         print(f"   • Creating {num_envs} environment instances...")
         self.envs = [env_fn() for _ in range(num_envs)]
         
-        # Extract metadata from first environment (all should be identical)
+        # Get metadata from the first env (all should match)
         env_sample = self.envs[0]
         self.num_actions = env_sample.action_space.n
         self.observation_space = env_sample.observation_space
@@ -82,7 +82,7 @@ class VHAS_VecEnv(VecEnv):
         self.episode_successes = deque(maxlen=1000)  # Track success (terminal reward > 0)
         self.total_episodes = 0
         
-        # Configuration dict (can be populated with env-specific config)
+        # Config dict (can hold env-specific settings)
         self.cfg = {
             'num_envs': num_envs,
             'max_episode_length': max_episode_length,
@@ -99,7 +99,7 @@ class VHAS_VecEnv(VecEnv):
             device=self.device
         )
         
-        # Reset all environments to populate initial observations
+        # Reset all envs to populate initial observations
         print(f"   • Resetting all environments...")
         self.reset()
         
@@ -108,11 +108,11 @@ class VHAS_VecEnv(VecEnv):
         print(f"   • Action space: Discrete({self.num_actions})")
     
     def _print_episode_stats(self):
-        """Print episode statistics every 100 episodes."""
+        """Print episode stats every 100 episodes."""
         if len(self.episode_rewards) < 100:
             return
         
-        # Calculate statistics from last 100 episodes
+        # Compute stats from the last 100 episodes
         last_100_rewards = list(self.episode_rewards)[-100:]
         last_100_lengths = list(self.episode_lengths)[-100:]
         last_100_successes = list(self.episode_successes)[-100:]
@@ -131,9 +131,9 @@ class VHAS_VecEnv(VecEnv):
     
     def _create_obs_buffer(self) -> TensorDict:
         """
-        Create a batched observation buffer based on observation_space.
+        Create a batched observation buffer from observation_space.
         
-        The buffer will have shape [num_envs, ...original_shape] for each key.
+        The buffer has shape [num_envs, ...original_shape] for each key.
         This is populated during reset() and step().
         
         Returns:
@@ -142,7 +142,7 @@ class VHAS_VecEnv(VecEnv):
         obs_dict = {}
         
         for key, space in self.observation_space.spaces.items():
-            # Determine dtype based on space
+            # Pick dtype based on the space
             if 'mask' in key or key == 'action_mask':
                 dtype = torch.uint8
             elif 'index' in key:
@@ -163,8 +163,7 @@ class VHAS_VecEnv(VecEnv):
         """
         Return the current observation buffer.
         
-        This method is called by RSL-RL's OnPolicyRunner to get observations
-        before calling act() on the policy.
+        RSL-RL's OnPolicyRunner calls this before policy act().
         
         Returns:
             TensorDict: Current observations for all environments
@@ -173,10 +172,10 @@ class VHAS_VecEnv(VecEnv):
     
     def step(self, actions: torch.Tensor) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
         """
-        Execute one step in all environments.
+        Step all environments once.
         
         Args:
-            actions: Tensor of shape [num_envs] or [num_envs, 1] containing action indices
+            actions: Tensor of shape [num_envs] or [num_envs, 1] with action indices
         
         Returns:
             observations: TensorDict of batched observations
@@ -184,18 +183,18 @@ class VHAS_VecEnv(VecEnv):
             dones: Tensor of shape [num_envs] containing done flags
             extras: Dict containing additional info (time_outs, logs, etc.)
         """
-        # Ensure actions are in correct shape
-        # RSL-RL stores actions with shape [num_envs, action_dim].
-        # Với GNN policy rời rạc, ta trả về one-hot [num_envs, num_actions].
-        # Ở đây ta convert về chỉ số action [num_envs] trước khi gọi env.step().
+        # Ensure actions have the right shape
+        # RSL-RL stores actions as [num_envs, action_dim].
+        # For discrete GNN policy, actions come as one-hot [num_envs, num_actions].
+        # Convert back to action indices [num_envs] before env.step().
         if actions.dim() == 2 and actions.shape[1] == self.num_actions:
             # One-hot or logits -> indices
             actions_indices = actions.argmax(dim=-1)
         else:
-            # Scalar actions (e.g., [num_envs] hoặc [num_envs, 1])
+            # Scalar actions (e.g., [num_envs] or [num_envs, 1])
             actions_indices = actions.squeeze(-1)
         
-        # Convert actions to CPU numpy for Gymnasium compatibility
+        # Convert actions to CPU numpy for Gymnasium
         actions_cpu = actions_indices.cpu().numpy()
         
         # Storage for step results
@@ -203,7 +202,7 @@ class VHAS_VecEnv(VecEnv):
         dones_list = []
         infos_list = []
         
-        # Step each environment
+        # Step each env
         for i in range(self.num_envs):
             obs, reward, done, truncated, info = self.envs[i].step(int(actions_cpu[i]))
             
@@ -227,14 +226,14 @@ class VHAS_VecEnv(VecEnv):
             # Increment episode length
             self.episode_length_buf[i] += 1
             
-            # Auto-reset if episode finished
+            # Auto-reset if the episode ended
             if done or truncated:
-                # Record episode statistics
+                # Record episode stats
                 episode_reward = self.episode_reward_buf[i].item()
                 episode_length = self.episode_length_buf[i].item()
                 
-                # Check if episode was successful (terminal reward > 0)
-                # Success is indicated by positive terminal reward in info
+                # Check whether the episode was successful
+                # Success is indicated by a positive terminal reward in info
                 is_success = False
                 if 'rewards' in info and 'terminal' in info['rewards']:
                     is_success = info['rewards']['terminal'] > 0
@@ -247,22 +246,22 @@ class VHAS_VecEnv(VecEnv):
                 self.episode_successes.append(1 if is_success else 0)
                 self.total_episodes += 1
                 
-                # Print episode stats every 100 episodes
+                # Print stats every 100 episodes
                 if self.total_episodes % 100 == 0:
                     self._print_episode_stats()
                 
-                # Store terminal observation info before reset (use saved values)
+                # Store terminal info before reset
                 terminal_info = {
                     'terminal_observation': obs,
-                    'episode_length': episode_length,  # Use saved value, not from buffer
-                    'episode_reward': episode_reward   # Use saved value, not from buffer
+                    'episode_length': episode_length,  # Use saved value, not buffer
+                    'episode_reward': episode_reward   # Use saved value, not buffer
                 }
                 
-                # Reset episode buffers AFTER storing info
+                # Reset episode buffers after saving info
                 self.episode_reward_buf[i] = 0.0
                 self.episode_length_buf[i] = 0
                 
-                # Reset environment
+                # Reset env
                 new_obs, new_info = self.envs[i].reset()
                 
                 # Update buffer with reset observation
@@ -306,17 +305,16 @@ class VHAS_VecEnv(VecEnv):
         """
         extras = {}
         
-        # Time-outs: episodes that ended due to max_episode_length (not true terminal)
-        # In our case, if episode_length >= max_episode_length, it's a timeout.
-        # RSL-RL expects `time_outs` to be shape [num_envs], because PPO will
-        # call `extras["time_outs"].unsqueeze(1)` internally.
+        # Time-outs: episodes ending due to max_episode_length
+        # If episode_length >= max_episode_length, it's a timeout.
+        # RSL-RL expects time_outs with shape [num_envs].
         time_outs = self.episode_length_buf >= self.max_episode_length
         extras["time_outs"] = time_outs.float()
         
-        # Logging information
+        # Logging info
         log_dict = {}
         
-        # Aggregate episode statistics
+        # Aggregate episode stats
         episode_lengths = []
         episode_rewards = []
         
@@ -353,7 +351,7 @@ class VHAS_VecEnv(VecEnv):
         """
         Reset all environments.
         
-        This is called at the start of training and can be called manually.
+        Called at the start of training and can be used manually.
         
         Returns:
             TensorDict: Initial observations for all environments
@@ -377,7 +375,7 @@ class VHAS_VecEnv(VecEnv):
         return self.obs_buf
     
     def close(self):
-        """Close all environments and cleanup resources."""
+        """Close all environments and clean up resources."""
         for env in self.envs:
             env.close()
     

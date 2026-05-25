@@ -12,9 +12,9 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
         self.embedding_dim = embedding_dim
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # --- 1. Định nghĩa Observation Space tĩnh cho RSL-RL ---
+        # --- 1. Define a static observation space for RSL-RL ---
         
-        # Node Features Spaces (Float32)
+        # Node feature spaces (float32)
         node_spaces = {
             f"{name}_x": gym.spaces.Box(
                 low=-np.inf, high=np.inf, 
@@ -24,7 +24,7 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             for name in ["agent", "state", "tool"]
         }
         
-        # Node Masks 
+        # Node masks
         node_masks = {
             f"{name}_mask": gym.spaces.Box(
                 low=0, high=1, 
@@ -34,7 +34,7 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             for name in ["agent", "state", "tool"]
         }
 
-        # Edge Index Spaces (Int64)
+        # Edge index spaces (int64)
         edge_types = [
             "state__triggers__agent",
             "agent__produces__state",
@@ -49,7 +49,7 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             for etype in edge_types
         }
         
-        # Edge Masks 
+        # Edge masks
         edge_masks = {
             f"{etype}_mask": gym.spaces.Box(
                 low=0, high=1, 
@@ -59,42 +59,42 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             for etype in edge_types
         }
 
-        # Gộp tất cả vào Dict
+        # Merge everything into a dict
         self.observation_space = gym.spaces.Dict({
             **node_spaces,
             **node_masks,
             **edge_spaces,
             **edge_masks,
-            # Thêm key mới cho action mask
+            # Add the action mask key
             "action_mask": gym.spaces.Box(0, 1, (self.env.num_actions,), dtype=np.uint8)
         })
 
     def _pad_tensor(self, tensor, max_len, is_edge_index=False):
-        """Hàm tiện ích để padding tensor"""
+        """Utility for tensor padding."""
         
-        # Chuẩn bị mask kiểu Bool để xử lý logic, nhưng sẽ cast về uint8 khi trả về
+        # Use bool-style logic, then cast back to uint8
         mask_dtype = torch.uint8 
 
         if is_edge_index:
-            # Edge index có shape [2, num_edges]
+            # Edge index shape: [2, num_edges]
             current_len = tensor.shape[1]
             if current_len > max_len:
-                # Truncate nếu vượt quá
+                # Truncate if too long
                 return (
                     tensor[:, :max_len], 
                     torch.ones(max_len, dtype=mask_dtype, device=self.device)
                 )
             
-            # Padding
+            # Pad
             padded = torch.zeros((2, max_len), dtype=torch.long, device=self.device)
             padded[:, :current_len] = tensor
             
-            # Tạo mask (1: thật, 0: đệm)
+            # Build mask (1: real, 0: pad)
             mask = torch.zeros(max_len, dtype=mask_dtype, device=self.device)
             mask[:current_len] = 1
             return padded, mask
         else:
-            # Node features có shape [num_nodes, dim]
+            # Node feature shape: [num_nodes, dim]
             current_len = tensor.shape[0]
             if current_len > max_len:
                 return (
@@ -110,10 +110,10 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             return padded, mask
 
     def _process_hetero_data(self, data: HeteroData, action_mask: np.ndarray):
-        """Biến đổi HeteroData động thành TensorDict tĩnh"""
+        """Convert dynamic HeteroData into a static TensorDict."""
         processed_dict = {}
 
-        # 1. Xử lý Nodes (Agent, State, Tool)
+        # 1. Process nodes (agent, state, tool)
         for node_type in ["agent", "state", "tool"]:
             if node_type in data.x_dict:
                 x = data[node_type].x
@@ -124,7 +124,7 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             processed_dict[f"{node_type}_x"] = padded_x
             processed_dict[f"{node_type}_mask"] = mask
 
-        # 2. Xử lý Edges
+        # 2. Process edges
         edge_mapping = {
             ("state", "triggers", "agent"): "state__triggers__agent",
             ("agent", "produces", "state"): "agent__produces__state",
@@ -141,21 +141,21 @@ class VHAS_GNN_Wrapper(gym.Wrapper):
             processed_dict[f"{str_edge_type}_index"] = padded_edge
             processed_dict[f"{str_edge_type}_mask"] = mask
 				
-				# --- GÓI ACTION MASK VÀO TENSORDICT ---
+                # --- Pack action mask into TensorDict ---
         processed_dict["action_mask"] = torch.from_numpy(action_mask).to(self.device)
         
-        # Quan trọng: RSL-RL mong đợi TensorDict trả về từ env
-        # batch_size=[] nghĩa là đây là observation của 1 môi trường đơn lẻ
+        # RSL-RL expects a TensorDict from the env
+        # batch_size=[] means a single-env observation
         return TensorDict(processed_dict, batch_size=[])
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        # obs là HeteroData, info chứa action_mask
+        # obs is HeteroData; info contains action_mask
         action_mask = info.get('action_mask', np.ones(self.env.num_actions, dtype=np.uint8))
         return self._process_hetero_data(obs, action_mask), info
 
     def step(self, action):
         obs, reward, done, truncated, info = self.env.step(action)
-        # obs là HeteroData, info chứa action_mask
+        # obs is HeteroData; info contains action_mask
         action_mask = info.get('action_mask', np.ones(self.env.num_actions, dtype=np.uint8))
         return self._process_hetero_data(obs, action_mask), reward, done, truncated, info

@@ -10,12 +10,12 @@ from rsl_rl.networks import MLP
 
 class ActorCriticGNN(nn.Module):
     """
-    Custom GNN-based Actor-Critic compatible với RSL-RL.
+    Custom GNN-based Actor-Critic for RSL-RL.
     
     This class implements a graph neural network policy for VHAS Orchestrator,
     using HeteroData observations and action masking.
     """
-    # RSL-RL compatibility: Required attribute to indicate non-recurrent policy
+    # RSL-RL compatibility: marks a non-recurrent policy
     is_recurrent: bool = False
     
     def __init__(
@@ -29,20 +29,19 @@ class ActorCriticGNN(nn.Module):
         **kwargs,
     ):
         """
-        Custom GNN-based Actor-Critic compatible với RSL-RL.
+                Custom GNN-based Actor-Critic for RSL-RL.
 
-        Lưu ý quan trọng:
-        - OnPolicyRunner sẽ gọi ctor với chữ ký:
+                Notes:
+                - OnPolicyRunner calls the ctor with:
 
               ActorCriticGNN(obs, obs_groups, env.num_actions, **policy_cfg)
 
-          nên 3 tham số đầu tiên PHẢI là (obs, obs_groups, num_actions).
-        - Các tham số như num_actor_obs, num_critic_obs sẽ được tính nội bộ
-          từ TensorDict obs, không truyền từ bên ngoài.
+                    so the first 3 args must be (obs, obs_groups, num_actions).
+                - num_actor_obs and num_critic_obs are computed from TensorDict obs.
         """
         super().__init__()
 
-        # Validate và convert num_actions thành int
+                # Validate and cast num_actions
         if not isinstance(num_actions, int):
             num_actions = int(num_actions)
         
@@ -50,26 +49,26 @@ class ActorCriticGNN(nn.Module):
         self.embedding_dim = 768 
         self.gnn_hidden_dim = 128
 
-        # --- 1. Kiến trúc GNN Backbone (AFAN) ---
+        # --- 1. GNN backbone (AFAN) ---
         self.gnn = HeteroConv({
             ('state', 'triggers', 'agent'): GATv2Conv((-1, -1), self.gnn_hidden_dim, add_self_loops=False),
             ('agent', 'produces', 'state'): GATv2Conv((-1, -1), self.gnn_hidden_dim, add_self_loops=False),
             ('agent', 'calls', 'tool'): GATv2Conv((-1, -1), self.gnn_hidden_dim, add_self_loops=False),
         }, aggr='mean')
         
-        # Tạo một LayerNorm riêng cho mỗi loại nút
+        # Separate LayerNorm per node type
         self.node_norms = nn.ModuleDict({
             'agent': LayerNorm(self.gnn_hidden_dim),
             'state': LayerNorm(self.gnn_hidden_dim),
             'tool': LayerNorm(self.gnn_hidden_dim)
         })
 
-        # --- 2. [VÁ LỖI A2] Embedding cho Đồ thị Rỗng ---
-        # Một vector có thể học được, đại diện cho trạng thái "không có thông tin"
+        # --- 2. [A2 fix] Empty-graph embedding ---
+        # Learnable vector for the "no information" state
         self.empty_graph_embedding = nn.Parameter(torch.randn(1, self.gnn_hidden_dim * 3))
 
-        # --- 3. Actor & Critic Heads ---
-        # Đảm bảo hidden_dims là list/tuple (MLP yêu cầu iterable)
+        # --- 3. Actor and critic heads ---
+        # Ensure hidden_dims is iterable
         if actor_hidden_dims is None:
             actor_hidden_dims = [256, 256]
         if not isinstance(actor_hidden_dims, (list, tuple)):
@@ -88,83 +87,83 @@ class ActorCriticGNN(nn.Module):
 
     def _reconstruct_hetero_batch(self, obs: TensorDict) -> Batch:
         """
-        Hàm cốt lõi: Chuyển đổi TensorDict -> PyG Batch với INDEX REMAPPING.
-        Đảm bảo topo đồ thị chính xác 100% sau khi unpadding.
+        Core step: TensorDict -> PyG Batch with index remapping.
+        Keeps graph topology correct after unpadding.
         """
         batch_size = obs.shape[0]
         data_list = []
         device = obs.device
 
-        # Cấu hình Mapping
+        # Mapping setup
         node_types = ["agent", "state", "tool"]
-        # Lưu ý: key của edge_mapping phải khớp với key trong TensorDict từ Wrapper
+        # edge_mapping keys must match the wrapper output
         edge_mapping = {
             "state__triggers__agent": ("state", "triggers", "agent"),
             "agent__produces__state": ("agent", "produces", "state"),
             "agent__calls__tool": ("agent", "calls", "tool")
         }
 
-        # Lấy kích thước tối đa từ shape của tensor đầu vào (để tạo bảng mapping)
-        # Giả sử shape là [batch_size, max_nodes, feat_dim]
+        # Get max size from the input tensor shape
+        # Assumes [batch_size, max_nodes, feat_dim]
         max_nodes = obs["agent_x"].shape[1] 
 
         for i in range(batch_size):
             data = HeteroData()
             
-            # --- 1. UNPADDING NODES & TẠO MAPPING ---
+            # --- 1. Unpad nodes and build mapping ---
             # id_mappings: Dict[node_type, Tensor]
-            # Lưu bảng tra cứu: index_cũ (trong padding) -> index_mới (trong đồ thị sạch)
+            # Store old padded index -> new clean graph index
             id_mappings = {}
 
             for n_type in node_types:
-                # Mask: [max_nodes] (bool hoặc uint8)
+                # Mask: [max_nodes] (bool or uint8)
                 mask = obs[f"{n_type}_mask"][i].bool()
                 num_valid_nodes = mask.sum().item()
-                data[n_type].num_nodes = num_valid_nodes # Ghi lại số lượng node thật
+                data[n_type].num_nodes = num_valid_nodes # Save real node count
 
                 if num_valid_nodes > 0:
-                    # Lấy feature node thật
+                    # Get real node features
                     data[n_type].x = obs[f"{n_type}_x"][i][mask]
-                    # TẠO MAPPING TABLE
-                    # Khởi tạo bảng mapping với giá trị -1 (invalid)
+                    # Build mapping table
+                    # Initialize mapping with -1 (invalid)
                     mapping = torch.full((max_nodes,), -1, dtype=torch.long, device=device)
-                    # Lấy danh sách index cũ (các vị trí mask == True)
+                    # Get old indices where mask is True
                     old_indices = torch.nonzero(mask, as_tuple=True)[0].to(device)
-                    # Gán index mới (0, 1, 2...) cho các vị trí đó
+                    # Assign new indices (0, 1, 2...)
                     mapping[old_indices] = torch.arange(num_valid_nodes, device=device)
                     
                     id_mappings[n_type] = mapping
                 else:
-                    # Nếu không có node nào loại này, tạo mapping rỗng để tránh lỗi key error sau này
+                    # Empty mapping avoids later key errors
                     id_mappings[n_type] = torch.full((max_nodes,), -1, dtype=torch.long, device=device)
 
-            # --- 2. UNPADDING EDGES & REMAPPING ---
+            # --- 2. Unpad edges and remap ---
             for str_key, pyg_key in edge_mapping.items():
                 src_type, _, dst_type = pyg_key
                 
-                # Check xem node đích có tồn tại không trước khi xử lý cạnh
+                # Skip if either endpoint type is missing
                 if data[src_type].num_nodes == 0 or data[dst_type].num_nodes == 0:
-                    continue # Bỏ qua loại cạnh này nếu không có node tương ứng
+                    continue # Skip this edge type
                 
-                # Mask cạnh: [max_edges]
+                # Edge mask: [max_edges]
                 edge_mask = obs[f"{str_key}_mask"][i].bool()
                 
                 if edge_mask.sum() > 0:
-                    # Lấy edge_index cũ: [2, num_valid_edges]
+                    # Get old edge_index: [2, num_valid_edges]
                     raw_edge_index = obs[f"{str_key}_index"][i][:, edge_mask].long()
                     
                     src_old = raw_edge_index[0]
                     dst_old = raw_edge_index[1]
 
-                    # REMAP: Tra cứu index mới từ bảng mapping
+                    # Remap using the index tables
                     src_mapping = id_mappings[src_type]
                     dst_mapping = id_mappings[dst_type]
 
                     src_new = src_mapping[src_old]
                     dst_new = dst_mapping[dst_old]
 
-                    # VALIDATE: Chỉ giữ lại các cạnh nối giữa các node hợp lệ
-                    # (Cạnh hợp lệ là cạnh mà cả src và dst đều map ra giá trị >= 0)
+                    # Keep only valid edges
+                    # A valid edge maps both src and dst to >= 0
                     valid_edges_mask = (src_new >= 0) & (dst_new >= 0)
 
                     if valid_edges_mask.sum() > 0:
@@ -176,8 +175,8 @@ class ActorCriticGNN(nn.Module):
             
             data_list.append(data)
 
-        # --- TẠO PYG BATCH ---
-        # Batch.from_data_list sẽ tự động xử lý offset cho các index đã được remap sạch sẽ
+        # --- Build PyG batch ---
+        # Batch.from_data_list handles offsets automatically
         pyg_batch = Batch.from_data_list(data_list)
         
         return pyg_batch
@@ -188,20 +187,20 @@ class ActorCriticGNN(nn.Module):
         """
         pyg_batch = self._reconstruct_hetero_batch(obs)
         
-        # Chạy GNN
+        # Run GNN
         x_dict = self.gnn(pyg_batch.x_dict, pyg_batch.edge_index_dict)
         
         for node_type, embeddings in x_dict.items():
             x_dict[node_type] = self.node_norms[node_type](embeddings)
 
-        # --- GLOBAL POOLING (OPTIMIZED: Pre-allocate tensor) ---
+        # --- Global pooling (optimized: pre-allocate tensor) ---
         batch_size = obs.shape[0]
         if not x_dict or not any(
             pyg_batch[node_type].num_nodes > 0 for node_type in x_dict
         ):
             return self.empty_graph_embedding.to(obs.device).expand(batch_size, -1)
 
-        # Pre-allocate output tensor for better performance
+        # Pre-allocate output tensor
         pooled_embeds = torch.zeros(
             (batch_size, 3 * self.gnn_hidden_dim), 
             device=obs.device, 
@@ -211,28 +210,28 @@ class ActorCriticGNN(nn.Module):
         node_types = ["agent", "state", "tool"]
         for idx, node_type in enumerate(node_types):
             if node_type in x_dict and pyg_batch[node_type].num_nodes > 0:
-                # Thực hiện pooling cho loại nút này
+                # Pool this node type
                 embeds = x_dict[node_type]
                 batch_idx = pyg_batch[node_type].batch
                 pooled = global_mean_pool(embeds, batch_idx)
                 
-                # Xử lý trường hợp một số đồ thị trong batch không có loại nút này
-                # Tạo một tensor đầy đủ và điền vào
+                # Handle batches missing this node type
+                # Fill the corresponding slice
                 unique_indices = torch.unique(batch_idx)
                 start_idx = idx * self.gnn_hidden_dim
                 end_idx = (idx + 1) * self.gnn_hidden_dim
                 pooled_embeds[unique_indices, start_idx:end_idx] = pooled
         
-        # Final graph embedding (already concatenated)
+        # Final graph embedding
         final_graph_embedding = pooled_embeds  # Shape: [batch_size, 3 * gnn_hidden_dim]
             
         return final_graph_embedding
 
     def _update_distribution(self, logits: torch.Tensor, action_masks: torch.Tensor) -> None:
-        """Cập nhật phân phối hành động, có áp dụng mask."""
+        """Update the masked action distribution."""
         
-        # Áp dụng mask: đặt logits của các hành động không hợp lệ thành -inf
-        # Chuyển mask (uint8) thành boolean
+        # Mask invalid actions by setting logits to -inf
+        # Convert mask (uint8) to bool
         valid_mask = action_masks.bool()
         if valid_mask.sum() == 0:
             print("Warning: action_masks contains no valid actions; skipping mask to avoid NaNs.")
@@ -241,22 +240,22 @@ class ActorCriticGNN(nn.Module):
         
         self.distribution = Categorical(logits=logits)
 
-    # --- RSL-RL Interface Methods ---
+    # --- RSL-RL interface methods ---
     def act(self, obs: TensorDict, **kwargs) -> torch.Tensor:
-        # 1. Trích xuất đặc trưng
+        # 1. Extract features
         features = self._extract_features(obs)
         
-        # 2. Lấy action_mask từ TensorDict obs
+        # 2. Get action_mask from TensorDict
         action_masks = obs["action_mask"]
         
-        # 3. Tính Logits từ Actor Head
+        # 3. Compute logits from the actor head
         logits = self.actor(features)
         
-        # 4. Tạo phân phối (đã có mask) và lấy mẫu
+        # 4. Build the masked distribution and sample
         self._update_distribution(logits, action_masks)
         # Sample discrete action indices: shape [batch]
         action_indices = self.distribution.sample()
-        # Convert to one-hot vectors so that action shape matches [batch, num_actions]
+        # Convert to one-hot vectors
         actions_one_hot = torch.nn.functional.one_hot(
             action_indices, num_classes=self.num_actions
         ).float()
@@ -264,10 +263,10 @@ class ActorCriticGNN(nn.Module):
 
     def get_actions_log_prob(self, actions: torch.Tensor) -> torch.Tensor:
         """
-        Trả về log-prob của các action đã thực hiện.
+        Return log-probabilities for the given actions.
 
-        - Trong training, `actions` là one-hot vector [batch, num_actions].
-        - Ta chuyển về chỉ số (argmax) trước khi gọi log_prob của Categorical.
+        - During training, `actions` is a one-hot vector [batch, num_actions].
+        - Convert to indices before calling Categorical.log_prob.
         """
         if actions.dim() == 2 and actions.shape[1] == self.num_actions:
             action_indices = actions.argmax(dim=-1)
@@ -281,8 +280,8 @@ class ActorCriticGNN(nn.Module):
         """
         Mean of the action distribution.
 
-        Để tương thích với RSL-RL (PPO), ta trả về tensor shape [batch_size, num_actions].
-        Với Categorical, một lựa chọn hợp lý là dùng xác suất (probs) của từng action.
+        Return a [batch_size, num_actions] tensor for RSL-RL compatibility.
+        For Categorical, probabilities are a reasonable choice.
         """
         if self.distribution is None:
             raise RuntimeError("Distribution not initialized. Call act() first.")
@@ -294,9 +293,8 @@ class ActorCriticGNN(nn.Module):
         """
         Standard deviation of the action distribution.
 
-        PPO trong RSL-RL giả định phân phối Gaussian liên tục và dùng `action_std`
-        cho tính KL divergence. Với Categorical, ta trả về tensor 1s cùng shape với
-        `action_mean` để giữ tương thích shape, dù giá trị không có ý nghĩa vật lý.
+        PPO expects a Gaussian `action_std` for KL computation.
+        For Categorical, return ones with the same shape as `action_mean`.
         """
         if self.distribution is None:
             raise RuntimeError("Distribution not initialized. Call act() first.")
@@ -327,16 +325,15 @@ class ActorCriticGNN(nn.Module):
         """
         Update normalization statistics for observations.
         
-        RSL-RL calls this method during training to update running statistics.
-        For GNN policy, we don't use observation normalization (graph-structured input),
-        so this is a no-op.
+        RSL-RL calls this during training to update running stats.
+        Graph inputs do not use observation normalization, so this is a no-op.
         """
-        # No normalization needed for graph-structured observations
+        # No normalization needed for graph inputs
         pass
     
     def reset(self, dones=None):
         """
         Reset policy state (e.g., hidden states for recurrent policies).
-        For feedforward GNN policy, this is a no-op.
+        Feedforward GNN policy: no-op.
         """
         pass
