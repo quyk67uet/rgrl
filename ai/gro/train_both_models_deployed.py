@@ -1,22 +1,22 @@
 # train_both_models_deployed.py
 """
-Training VHAS Orchestrator với MLP + Guidance cho CẢ 2 MODELS (A và B) 
-DEPLOYED MODE - chạy background không bị cancel khi tắt máy.
+Train the VHAS Orchestrator (MLP + Guidance) for BOTH models (A and B).
+DEPLOYED MODE: Runs in background and continues if the client disconnects.
 
-USAGE - QUAN TRỌNG: PHẢI DÙNG --detach:
-   
-   modal run --detach train_both_models_deployed.py::start_training
+Usage (IMPORTANT): use --detach to run in background:
 
-   Sau khi chạy lệnh trên, BẠN CÓ THỂ TẮT MÁY NGAY.
-   
-   Training sẽ chạy trên Modal cloud ~2 giờ.
+    modal run --detach train_both_models_deployed.py::start_training
 
-Kiểm tra logs:
-   modal app logs vhas-orchestrator-dual-training --follow
+After launching, you may close your machine — training runs on Modal cloud (~2 hours).
 
-Download kết quả:
-   modal volume ls vhas-training-results
-   modal volume get vhas-training-results /orchestrator_mlp_guided_model_a_<TIMESTAMP>/ ./results_a/
+Check logs:
+
+    modal app logs vhas-orchestrator-dual-training --follow
+
+Download results:
+
+    modal volume ls vhas-training-results
+    modal volume get vhas-training-results /orchestrator_mlp_guided_model_a_<TIMESTAMP>/ ./results_a/
 """
 
 import modal
@@ -24,7 +24,7 @@ import time
 
 app = modal.App("vhas-orchestrator-dual-training")
 
-# Image với SB3 và dependencies
+# Docker image with SB3 and required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -39,7 +39,7 @@ image = (
     )
 )
 
-# Volumes
+# Volumes mounted into the container
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
@@ -63,8 +63,8 @@ def train_single_model(
     run_id: str = None
 ):
     """
-    Train orchestrator với một model cụ thể.
-    Chạy trong background, không bị cancel khi client disconnect.
+    Train the orchestrator for a single model.
+    Runs in background and continues if the client disconnects.
     """
     from datetime import datetime
     import sys
@@ -89,13 +89,13 @@ def train_single_model(
     scenarios_data_dir = "/data/scenarios/data"
     kb_path = "/data/simulation_kb.json"
     
-    # Create unique output folder with timestamp if run_id provided
+    # Create a unique output folder; include run_id when provided
     if run_id:
         output_dir = f"/results/orchestrator_mlp_guided_{model_choice}_{run_id}"
     else:
         output_dir = f"/results/orchestrator_mlp_guided_{model_choice}"
     
-    # Train
+    # Execute training
     try:
         model, stats = train_orchestrator_baseline(
             encoder_path=encoder_path,

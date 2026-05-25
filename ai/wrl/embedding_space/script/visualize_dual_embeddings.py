@@ -1,27 +1,27 @@
 """
-VISUALIZATION SCRIPT FOR DUAL-ENCODER ARCHITECTURE
-===================================================
+Visualization script for the dual-encoder architecture.
+======================================================
 
-Script này visualize cả 2 embedding spaces của Dual-Encoder:
-- State Embedding Space (từ StateEncoder)
-- Action Embedding Space (từ ActionEncoder)
+This script visualizes both embedding spaces produced by the dual encoder:
+- Semantic State embedding space (from StateEncoder)
+- Action embedding space (from ActionEncoder)
 
-Sử dụng t-SNE để giảm chiều từ 768D → 2D và vẽ biểu đồ.
+It uses t-SNE to reduce embeddings from 768D to 2D and renders the plots.
 
 WORKFLOW:
-1. Chạy trực tiếp trên Modal (không cần download embeddings về local)
-   $ modal run visualize_dual_embeddings.py
+1. Run directly on Modal (no local embedding download needed)
+     $ modal run visualize_dual_embeddings.py
 
 OUTPUT:
-- tsne_model_a_dual_state_space.png: State space của Model A
-- tsne_model_a_dual_action_space.png: Action space của Model A
-- tsne_model_b_dual_state_space.png: State space của Model B
-- tsne_model_b_dual_action_space.png: Action space của Model B
-- tsne_model_a_dual_combined.png: Combined view (State + Action) của Model A
-- tsne_model_b_dual_combined.png: Combined view (State + Action) của Model B
+- tsne_model_a_dual_state_space.png: Semantic State space for Model A
+- tsne_model_a_dual_action_space.png: Action space for Model A
+- tsne_model_b_dual_state_space.png: Semantic State space for Model B
+- tsne_model_b_dual_action_space.png: Action space for Model B
+- tsne_visualization.png: Combined view (Semantic State + Action)
+- tsne_embeddings_2d.csv: Consolidated 2D coordinates for both models
 
-Download với:
-  modal volume get vhas-finetuned-output tsne_*.png ./results/
+Download with:
+    modal volume get vhas-finetuned-output tsne_*.png ./results/
 """
 
 import json
@@ -36,7 +36,7 @@ import seaborn as sns
 import pandas as pd
 import modal
 
-# Định nghĩa Modal App và Image
+# Define Modal App and image
 app = modal.App("vhas-visualize-dual-embeddings")
 
 image = (
@@ -50,7 +50,7 @@ image = (
     ])
 )
 
-# Kết nối Modal Volume
+# Connect Modal volumes
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 
@@ -82,7 +82,7 @@ def visualize_dual_encoder_model(
     print(f"VISUALIZING {model_name}")
     print("="*80)
     
-    # 1. Load embeddings và metadata
+    # 1. Load embeddings and metadata
     print(f"\n📥 Loading embeddings from {embedding_space_dir}...")
     try:
         state_embeddings = np.load(os.path.join(embedding_space_dir, 'state_embeddings.npy'))
@@ -127,28 +127,28 @@ def visualize_dual_encoder_model(
         else:
             action_labels.append(f"Unknown: {name}")
     
-    # 4. Create labels for states (group by workflow phase)
+    # 4. Create labels for states (group by operational phase)
     state_labels = []
     for i in range(len(state_id_to_name)):
         state_text = state_id_to_name[str(i)]
         if "Initial State" in state_text:
-            state_labels.append("State: Initial Arrival")
+            state_labels.append("Semantic State: Initial Arrival")
         elif "Triage completed" in state_text:
-            state_labels.append("State: Triage Phase")
+            state_labels.append("Semantic State: Triage Phase")
         elif "Initial vitals assessed" in state_text:
-            state_labels.append("State: Initial Assessment")
+            state_labels.append("Semantic State: Initial Assessment")
         elif "Initial medication dispensed" in state_text:
-            state_labels.append("State: Initial Treatment")
+            state_labels.append("Semantic State: Initial Treatment")
         elif "Post-intervention vitals" in state_text:
-            state_labels.append("State: Post-Treatment")
+            state_labels.append("Semantic State: Post-Treatment")
         elif "Full medication reconciled" in state_text:
-            state_labels.append("State: Medication Review")
+            state_labels.append("Semantic State: Medication Review")
         elif "Final summary ready" in state_text:
-            state_labels.append("State: Discharge Phase")
+            state_labels.append("Semantic State: Discharge Phase")
         else:
-            state_labels.append("State: Other")
+            state_labels.append("Semantic State: Other")
     
-    # 5. Visualize Action Space
+    # 5. Visualize action space
     print("\n🎨 Generating t-SNE visualization for Action Space...")
     visualize_single_space(
         embeddings=action_embeddings,
@@ -157,16 +157,16 @@ def visualize_dual_encoder_model(
         output_file=f"/data/tsne_{output_prefix}_action_space.png"
     )
     
-    # 6. Visualize State Space
-    print("\n🎨 Generating t-SNE visualization for State Space...")
+    # 6. Visualize semantic state space
+    print("\n🎨 Generating t-SNE visualization for Semantic State Space...")
     visualize_single_space(
         embeddings=state_embeddings,
         labels=state_labels,
-        title=f"State Embedding Space - {model_name}",
+        title=f"Semantic State Embedding Space - {model_name}",
         output_file=f"/data/tsne_{output_prefix}_state_space.png"
     )
     
-    # 7. Visualize Combined Space (State + Action)
+    # 7. Visualize combined space (Semantic State + Action)
     print("\n🎨 Generating t-SNE visualization for Combined Space...")
     combined_embeddings = np.vstack([state_embeddings, action_embeddings])
     combined_labels = state_labels + action_labels
@@ -174,27 +174,30 @@ def visualize_dual_encoder_model(
     visualize_single_space(
         embeddings=combined_embeddings,
         labels=combined_labels,
-        title=f"Combined Embedding Space (State + Action) - {model_name}",
-        output_file=f"/data/tsne_{output_prefix}_combined.png",
+        title=f"Combined Embedding Space (Semantic State + Action) - {model_name}",
+        output_file=f"/data/tsne_visualization.png" if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'figures' / 'tsne_visualization.png',
         figsize=(20, 16)
     )
 
-    # Save combined 2D coordinates + labels to CSV for downstream plotting/analysis.
+    # Save consolidated 2D coordinates and labels to a shared CSV for downstream analysis.
     try:
-        # Compute a lightweight t-SNE again but deterministic to export coordinates
+        # Recompute t-SNE with a deterministic seed for exported coordinates.
         tsne = TSNE(n_components=2, perplexity=min(30, combined_embeddings.shape[0] - 1), random_state=42, max_iter=1000)
         emb2d = tsne.fit_transform(combined_embeddings)
-        import pandas as pd
+        model_label = "Model A" if "Model A" in model_name else "Model B"
         df = pd.DataFrame({
             'x': emb2d[:, 0],
             'y': emb2d[:, 1],
             'label': combined_labels,
-            'model': model_name,
+            'model': model_label,
         })
 
-        # Prefer writing into container volume path (/data) when running on Modal, else write to repo results
-        out_csv = Path('/data') / f"tsne_{output_prefix}_combined.csv" if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / f"tsne_{output_prefix}_combined.csv"
+        # Prefer writing into container volume path (/data) when running on Modal, else write to repo results.
+        out_csv = Path('/data') / 'tsne_embeddings_2d.csv' if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'tsne_embeddings_2d.csv'
         out_csv.parent.mkdir(parents=True, exist_ok=True)
+        if out_csv.exists():
+            existing_df = pd.read_csv(out_csv)
+            df = pd.concat([existing_df, df], ignore_index=True)
         df.to_csv(out_csv, index=False, encoding='utf-8')
         print(f"   ✓ TSNE coords saved to {out_csv}")
     except Exception as exc:
@@ -203,7 +206,7 @@ def visualize_dual_encoder_model(
     print(f"\n✅ Visualizations saved:")
     print(f"   - /data/tsne_{output_prefix}_action_space.png")
     print(f"   - /data/tsne_{output_prefix}_state_space.png")
-    print(f"   - /data/tsne_{output_prefix}_combined.png")
+    print(f"   - /data/tsne_visualization.png")
     
     # Commit to volume
     from modal import Volume
@@ -298,10 +301,10 @@ def main():
     print("\n" + "="*80)
     print("DUAL-ENCODER VISUALIZATION: t-SNE EMBEDDING SPACES")
     print("="*80)
-    print("\n📊 Câu hỏi: Dual-Encoder có tạo ra embedding spaces có cấu trúc hợp lý không?")
-    print("   - State Space: Clinical states được nhóm theo workflow phases")
-    print("   - Action Space: Agents và Tools được nhóm theo chức năng")
-    print("   - Combined Space: State và Action có tương tác cross-modal hợp lý")
+    print("\n📊 Question: Does the dual encoder produce embedding spaces with a meaningful structure?")
+    print("   - Semantic State Space: state prototypes grouped by operational phases")
+    print("   - Action Space: agents and tools grouped by function")
+    print("   - Combined Space: state and action representations show useful cross-modal alignment")
     print("\n" + "="*80)
     
     # Paths
@@ -313,7 +316,7 @@ def main():
     print("\n🔬 Visualizing Model A (Base → Fine-tune)...")
     visualize_dual_encoder_model.remote(
         embedding_space_dir=MODEL_A_DIR,
-        model_name="Model A (Chuyên khoa)",
+        model_name="Model A (Specialty)",
         universe_file=UNIVERSE_FILE,
         output_prefix="model_a_dual"
     )
@@ -322,7 +325,7 @@ def main():
     print("\n🔬 Visualizing Model B (Base → Pre-train → Fine-tune)...")
     visualize_dual_encoder_model.remote(
         embedding_space_dir=MODEL_B_DIR,
-        model_name="Model B (Toàn diện)",
+        model_name="Model B (Comprehensive)",
         universe_file=UNIVERSE_FILE,
         output_prefix="model_b_dual"
     )
@@ -338,8 +341,8 @@ def main():
     print("   $ modal volume get vhas-finetuned-output tsne_model_b_dual_state_space.png ./results/")
     print("   $ modal volume get vhas-finetuned-output tsne_model_b_dual_combined.png ./results/")
     print("\n💡 Insights:")
-    print("   - Action Space: Agents nên cluster riêng, Tools nên gần Agents owner")
-    print("   - State Space: States nên cluster theo workflow phases")
-    print("   - Combined Space: States nên gần Actions phù hợp (cross-modal alignment)")
+    print("   - Action Space: agents should form separate clusters, with tools near their owning agents")
+    print("   - Semantic State Space: state prototypes should cluster by operational phases")
+    print("   - Combined Space: states should be close to matching actions (cross-modal alignment)")
     print("\n" + "="*80 + "\n")
 

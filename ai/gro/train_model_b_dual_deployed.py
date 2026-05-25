@@ -2,7 +2,7 @@
 """
 Training script for Model B with Dual-Encoder Guidance on Modal.
 
-Model B: Base → Pre-train → Fine-tune (Toàn diện) với Dual-Encoder
+Model B: Base → Pre-train → Fine-tune with Dual-Encoder (comprehensive).
 """
 import modal
 import sys
@@ -11,7 +11,7 @@ from datetime import datetime
 # --- Modal Setup ---
 app = modal.App("vhas-train-model-b-dual")
 
-# Image với SB3 và dependencies
+# Docker image with SB3 and required dependencies
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -26,7 +26,7 @@ image = (
     )
 )
 
-# Volumes
+# Volumes mounted into the container
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_results_vol = modal.Volume.from_name("vhas-training-results", create_if_missing=True)
@@ -49,12 +49,12 @@ def train_model_b_dual(
     run_id: str = None
 ):
     """
-    Training function cho Model B với Dual-Encoder Guidance.
+    Training function for Model B using Dual-Encoder Guidance.
     """
     import os
     import sys
     
-    # Add paths (all files in /data/data/)
+    # Add repository code path (files are mounted at /data/data)
     sys.path.insert(0, '/data/data')
     
     from train_orchestrator_sb3 import train_orchestrator_baseline
@@ -121,7 +121,7 @@ def start_training(
     add_timestamp: bool = True
 ):
     """
-    Local entrypoint để start training job.
+    Local entrypoint to start the training job.
     """
     # Generate run ID
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S") if add_timestamp else None

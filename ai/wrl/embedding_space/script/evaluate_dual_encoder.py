@@ -1,19 +1,19 @@
 """
-EVALUATION SCRIPT FOR DUAL-ENCODER ARCHITECTURE
-================================================
+Evaluation script for the dual-encoder architecture.
+====================================================
 
-Script này đánh giá khả năng cross-modal retrieval của Dual-Encoder:
-- Query: State embeddings (từ StateEncoder)
-- Search: Action embeddings (từ ActionEncoder)
+This script evaluates cross-modal retrieval for the dual encoder:
+- Query: semantic state embeddings (from StateEncoder)
+- Search: action embeddings (from ActionEncoder)
 
 WORKFLOW:
-1. Chạy trực tiếp trên Modal (không cần download embeddings về local)
-   $ modal run evaluate_dual_encoder.py
+1. Run directly on Modal (no local embedding download needed)
+    $ modal run evaluate_dual_encoder.py
 
 OUTPUT:
-- Nearest Neighbors Analysis cho từng test query
+- Nearest-neighbor analysis for each test query
 - Retrieval metrics (MRR, Recall@K)
-- Comparison giữa Model A và Model B
+- Comparison between Model A and Model B
 """
 
 import json
@@ -23,7 +23,7 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import modal
 
-# Định nghĩa Modal App và Image
+# Define Modal App and image
 app = modal.App("vhas-evaluate-dual-encoder")
 
 image = (
@@ -34,7 +34,7 @@ image = (
     ])
 )
 
-# Kết nối Modal Volume
+# Connect Modal volumes
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 
@@ -52,18 +52,18 @@ def evaluate_dual_encoder_model(
     universe_file: str
 ):
     """
-    Đánh giá một Dual-Encoder model.
-    
+    Evaluate a dual-encoder model.
+
     Args:
         embedding_space_dir: Path to dual embedding space directory
-        model_name: Name of model (e.g., "Model A", "Model B")
+        model_name: Name of the model (e.g., "Model A", "Model B")
         universe_file: Path to vhas_universe.json
     """
     print("\n" + "="*80)
     print(f"EVALUATING {model_name}")
     print("="*80)
     
-    # 1. Load embeddings và metadata
+    # 1. Load embeddings and metadata
     print(f"\n📥 Loading embeddings from {embedding_space_dir}...")
     try:
         state_embeddings = np.load(os.path.join(embedding_space_dir, 'state_embeddings.npy'))
@@ -81,7 +81,7 @@ def evaluate_dual_encoder_model(
         print(f"   ❌ ERROR: {e}")
         return None
     
-    # 2. Load universe để xác định actionable entities (chỉ Agents)
+    # 2. Load universe to identify actionable entities (agents only)
     print(f"\n📋 Loading universe from {universe_file}...")
     try:
         with open(universe_file, 'r', encoding='utf-8') as f:
@@ -93,11 +93,11 @@ def evaluate_dual_encoder_model(
         print(f"   ❌ ERROR: {e}")
         return None
     
-    # 3. Tạo name_to_id maps
+    # 3. Create name-to-id maps
     state_name_to_id = {v: int(k) for k, v in state_id_to_name.items()}
     action_name_to_id = {v: int(k) for k, v in action_id_to_name.items()}
     
-    # 4. Filter để chỉ lấy actionable actions (Agents)
+    # 4. Filter to actionable actions (agents only)
     actionable_indices = []
     actionable_names = []
     for idx, name in action_id_to_name.items():
@@ -106,29 +106,29 @@ def evaluate_dual_encoder_model(
             actionable_names.append(name)
     
     actionable_action_embeddings = action_embeddings[actionable_indices]
-    print(f"   ✓ Filtered to {len(actionable_indices)} actionable actions (Agents only)")
+    print(f"   ✓ Filtered to {len(actionable_indices)} actionable actions (agents only)")
     
-    # 5. Define test queries (Clinical States)
+    # 5. Define test queries (semantic state prototypes)
     TEST_QUERIES = [
-        "Patient state is Triage completed, priority is High, suspected Acute Coronary Syndrome.",
-        "Patient state is Triage completed, priority is Low, suspected minor limb fracture.",
-        "Patient state is Initial vitals assessed, patient is hemodynamically unstable (hypotensive and tachycardic).",
-        "Patient state is Full medication reconciled, a significant drug-drug interaction was identified between the patient's home anticoagulant and a planned ED intervention.",
-        "Patient state is Initial medication dispensed, morphine administered for severe abdominal pain.",
-        "Patient state is Post-intervention vitals reassessed, patient remains hypotensive despite initial fluid bolus.",
-        "Patient state is Initial State - Patient has just arrived at the emergency department.",
-        "Patient state is Final summary ready, all interventions completed, patient stable for discharge."
+        "Semantic state prototype is Triage completed, priority is High, suspected Acute Coronary Syndrome.",
+        "Semantic state prototype is Triage completed, priority is Low, suspected minor limb fracture.",
+        "Semantic state prototype is Initial vitals assessed, the subject is hemodynamically unstable (hypotensive and tachycardic).",
+        "Semantic state prototype is Full medication reconciled, a significant drug-drug interaction was identified between the subject's home anticoagulant and a planned operational workflow intervention.",
+        "Semantic state prototype is Initial medication dispensed, morphine administered for severe abdominal pain.",
+        "Semantic state prototype is Post-intervention vitals reassessed, the subject remains hypotensive despite an initial fluid bolus.",
+        "Semantic state prototype is Initial State - Subject has just arrived at the operational setting.",
+        "Semantic state prototype is Final summary ready, all interventions completed, subject stable for discharge."
     ]
     
     # 6. Run evaluation
     print("\n" + "="*80)
-    print("NEAREST NEIGHBORS ANALYSIS (State → Action)")
+    print("NEAREST-NEIGHBOR ANALYSIS (Semantic State → Action)")
     print("="*80)
     
     results = []
     
     for query_text in TEST_QUERIES:
-        # Find query state in corpus
+        # Find the query state in the corpus
         if query_text not in state_name_to_id:
             print(f"\n⚠️  Query not found in corpus: {query_text[:80]}...")
             continue
@@ -136,7 +136,7 @@ def evaluate_dual_encoder_model(
         query_id = state_name_to_id[query_text]
         query_embedding = state_embeddings[query_id].reshape(1, -1)
         
-        # Compute cosine similarity với actionable actions
+        # Compute cosine similarity against actionable actions
         similarities = cosine_similarity(query_embedding, actionable_action_embeddings)[0]
         
         # Sort by similarity
@@ -153,8 +153,8 @@ def evaluate_dual_encoder_model(
         
         # Display
         short_query = query_text.split(',')[0] if ',' in query_text else query_text[:80]
-        print(f"\n📍 Query State: {short_query}...")
-        print(f"   ↓ Top-{top_k} Suggested Actions (Agents):")
+        print(f"\n📍 Query Semantic State: {short_query}...")
+        print(f"   ↓ Top-{top_k} suggested actions (agents):")
         
         for rank, (action_name, score) in enumerate(top_actions, 1):
             print(f"      {rank}. {action_name} (Score: {score:.4f})")
@@ -186,24 +186,7 @@ def evaluate_dual_encoder_model(
     print(f"✅ {model_name} EVALUATION COMPLETE")
     print("="*80)
     
-    # Persist nearest-neighbor results to JSON for downstream analysis.
-    try:
-        out_path = Path('/data') / 'wrl_nearest_neighbors.json' if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'wrl_nearest_neighbors.json'
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        with out_path.open('w', encoding='utf-8') as f:
-            json.dump({
-                'model_name': model_name,
-                'results': results,
-                'metrics': {
-                    'avg_top1_similarity': float(np.mean(top1_scores)) if top1_scores else 0.0,
-                    'avg_top3_similarity': float(np.mean(top3_scores)) if top3_scores else 0.0,
-                    'avg_top5_similarity': float(np.mean(top5_scores)) if top5_scores else 0.0,
-                }
-            }, f, ensure_ascii=False, indent=2)
-        print(f"   ✓ Nearest neighbors saved to: {out_path}")
-    except Exception as exc:
-        print(f"   ⚠️  Failed to persist nearest neighbors JSON: {exc}")
-
+    # Return the evaluation payload (no file I/O here)
     return {
         "model_name": model_name,
         "results": results,
@@ -223,10 +206,10 @@ def main():
     print("\n" + "="*80)
     print("DUAL-ENCODER EVALUATION: CROSS-MODAL RETRIEVAL (State → Action)")
     print("="*80)
-    print("\n📊 Câu hỏi: Từ một Clinical State, Dual-Encoder có đề xuất đúng Agent không?")
-    print("   - Query: State embeddings (từ StateEncoder)")
-    print("   - Search: Action embeddings (từ ActionEncoder)")
-    print("   - Metric: Cosine Similarity trong cross-modal space")
+    print("\n📊 Question: From a semantic state prototype, does the dual encoder retrieve the intended action?")
+    print("   - Query: semantic state embeddings (from StateEncoder)")
+    print("   - Search: action embeddings (from ActionEncoder)")
+    print("   - Metric: cosine similarity in cross-modal space")
     print("\n" + "="*80)
     
     # Paths
@@ -234,57 +217,89 @@ def main():
     MODEL_A_DIR = '/data/embedding_space_model_a_dual'
     MODEL_B_DIR = '/data/embedding_space_model_b_dual'
     
-    # Evaluate Model A
+    # Evaluate Model A and Model B (run modal functions)
     print("\n🔬 Evaluating Model A (Base → Fine-tune)...")
     result_a = evaluate_dual_encoder_model.remote(
         embedding_space_dir=MODEL_A_DIR,
-        model_name="Model A (Chuyên khoa)",
+        model_name="Model A (Semantic State)",
         universe_file=UNIVERSE_FILE
     )
-    
-    # Evaluate Model B
+
     print("\n🔬 Evaluating Model B (Base → Pre-train → Fine-tune)...")
     result_b = evaluate_dual_encoder_model.remote(
         embedding_space_dir=MODEL_B_DIR,
-        model_name="Model B (Toàn diện)",
+        model_name="Model B (Operational Guidance)",
         universe_file=UNIVERSE_FILE
     )
-    
-    # Comparison
+
+    # Both jobs should return dictionaries. Consolidate into a single payload.
+    consolidated = {
+        "model_a": result_a,
+        "model_b": result_b
+    }
+
+    # Persist consolidated JSON to the preferred output (Modal /data volume or local ai/results)
+    try:
+        out_path = Path('/data') / 'wrl_nearest_neighbors.json' if os.path.isdir('/data') else Path(__file__).resolve().parents[2] / 'ai' / 'results' / 'wrl_nearest_neighbors.json'
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # If the file exists, merge keys without overwriting unrelated content
+        if out_path.exists():
+            try:
+                with out_path.open('r', encoding='utf-8') as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+        else:
+            existing = {}
+
+        existing.update(consolidated)
+
+        with out_path.open('w', encoding='utf-8') as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+
+        print(f"\n   ✓ Consolidated nearest-neighbors saved to: {out_path}")
+    except Exception as exc:
+        print(f"\n   ⚠️ Failed to write consolidated JSON: {exc}")
+
+    # Print a simple comparison summary if both results are present
     print("\n" + "="*80)
     print("COMPARISON: MODEL A vs MODEL B")
     print("="*80)
-    
+
     if result_a and result_b:
-        print(f"\n📊 Average Top-1 Similarity:")
-        print(f"   Model A: {result_a['metrics']['avg_top1_similarity']:.4f}")
-        print(f"   Model B: {result_b['metrics']['avg_top1_similarity']:.4f}")
-        
-        print(f"\n📊 Average Top-3 Similarity:")
-        print(f"   Model A: {result_a['metrics']['avg_top3_similarity']:.4f}")
-        print(f"   Model B: {result_b['metrics']['avg_top3_similarity']:.4f}")
-        
-        print(f"\n📊 Average Top-5 Similarity:")
-        print(f"   Model A: {result_a['metrics']['avg_top5_similarity']:.4f}")
-        print(f"   Model B: {result_b['metrics']['avg_top5_similarity']:.4f}")
-        
-        # Determine winner
-        if result_b['metrics']['avg_top1_similarity'] > result_a['metrics']['avg_top1_similarity']:
-            diff = result_b['metrics']['avg_top1_similarity'] - result_a['metrics']['avg_top1_similarity']
-            print(f"\n🏆 Winner: Model B (Toàn diện) by {diff:.4f} points")
-            print("   → Pre-training on ADP+T1 data improved cross-modal retrieval!")
-        else:
-            diff = result_a['metrics']['avg_top1_similarity'] - result_b['metrics']['avg_top1_similarity']
-            print(f"\n🏆 Winner: Model A (Chuyên khoa) by {diff:.4f} points")
-            print("   → Domain-specific fine-tuning alone was sufficient!")
+        try:
+            print(f"\n📊 Average Top-1 Similarity:")
+            print(f"   Model A: {result_a['metrics']['avg_top1_similarity']:.4f}")
+            print(f"   Model B: {result_b['metrics']['avg_top1_similarity']:.4f}")
+
+            print(f"\n📊 Average Top-3 Similarity:")
+            print(f"   Model A: {result_a['metrics']['avg_top3_similarity']:.4f}")
+            print(f"   Model B: {result_b['metrics']['avg_top3_similarity']:.4f}")
+
+            print(f"\n📊 Average Top-5 Similarity:")
+            print(f"   Model A: {result_a['metrics']['avg_top5_similarity']:.4f}")
+            print(f"   Model B: {result_b['metrics']['avg_top5_similarity']:.4f}")
+
+            # Determine winner
+            if result_b['metrics']['avg_top1_similarity'] > result_a['metrics']['avg_top1_similarity']:
+                diff = result_b['metrics']['avg_top1_similarity'] - result_a['metrics']['avg_top1_similarity']
+                print(f"\n🏆 Winner: Model B (Operational Guidance) by {diff:.4f} points")
+                print("   → Pre-training on related data improved cross-modal retrieval!")
+            else:
+                diff = result_a['metrics']['avg_top1_similarity'] - result_b['metrics']['avg_top1_similarity']
+                print(f"\n🏆 Winner: Model A (Semantic State) by {diff:.4f} points")
+                print("   → Focused fine-tuning alone was sufficient!")
+        except Exception as exc:
+            print(f"\n⚠️  Comparison printing failed: {exc}")
     
     print("\n" + "="*80)
     print("✅ EVALUATION COMPLETE!")
     print("="*80)
     print("\n💡 Insights:")
-    print("   - Dual-Encoder tạo ra 2 embedding spaces compatible với nhau")
-    print("   - StateEncoder encode queries, ActionEncoder encode actions")
-    print("   - Cosine similarity trong cross-modal space đo độ phù hợp")
-    print("   - Higher similarity = Better State → Action mapping")
+    print("   - The dual encoder creates two compatible embedding spaces")
+    print("   - StateEncoder encodes queries, ActionEncoder encodes actions")
+    print("   - Cosine similarity in cross-modal space measures alignment")
+    print("   - Higher similarity = better Semantic State → Action mapping")
     print("\n" + "="*80 + "\n")
 

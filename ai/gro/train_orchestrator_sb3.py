@@ -1,12 +1,12 @@
 # train_orchestrator_sb3.py
 """
-Training Orchestrator với MLP + Guidance Baseline sử dụng Stable-Baselines3.
+Training Orchestrator with MLP + Guidance baseline using Stable-Baselines3.
 
 STRATEGY:
-- Use SB3's MlpPolicy (simple but powerful)
-- Integrate GuidanceMechanism via Callback
-- Action masking để restrict policy to guided candidates
-- Fast to implement, strong baseline
+- Use SB3's MlpPolicy (simple but effective)
+- Integrate GuidanceMechanism via a callback
+- Use action masking to restrict the policy to guided candidates
+- Fast to implement and a strong baseline
 """
 
 import os
@@ -31,12 +31,12 @@ from guidance import GuidanceMechanism
 
 class GuidanceAndMaskingCallback(BaseCallback):
     """
-    Callback tích hợp Guidance Mechanism với Action Masking for MaskablePPO.
-    
-    Workflow ở mỗi step:
-    1. Lấy current state text từ environment
-    2. Call Guidance để propose top-k candidates
-    3. Store mask to be retrieved by ActionMasker wrapper
+    Callback that integrates the Guidance Mechanism with action masking for MaskablePPO.
+
+    Per-step workflow:
+    1. Retrieve the current state text from the environment
+    2. Call the Guidance mechanism to propose top-k candidates
+    3. Store the action mask for the ActionMasker wrapper to consume
     """
     def __init__(self, guidance_mechanism: GuidanceMechanism, top_k: int = 5, verbose: int = 0):
         super().__init__(verbose)
@@ -53,7 +53,7 @@ class GuidanceAndMaskingCallback(BaseCallback):
     def _on_step(self) -> bool:
         """Called at each environment step."""
         try:
-            # Get current state text từ environment (unwrap từ DummyVecEnv)
+            # Get current state text from the environment (unwrap from DummyVecEnv)
             current_state_text = self.training_env.get_attr('current_state_text')[0]
             
             if current_state_text is None:
@@ -62,13 +62,13 @@ class GuidanceAndMaskingCallback(BaseCallback):
                     print("Warning: No current_state_text available, skipping guidance")
                 return True
             
-            # Get candidates from Guidance Mechanism
+            # Get candidate action names from the Guidance mechanism
             candidate_names = self.guidance.propose_actions(
                 current_state_text, 
                 top_k=self.top_k
             )
             
-            # Get environment's action mapping (unwrap from Monitor wrapper)
+            # Get the environment's action mapping (unwrap Monitor/TimeLimit wrappers)
             env = self.training_env.envs[0]
             # Unwrap Monitor to get base ClinicalWorkflowEnv
             from gymnasium.wrappers import TimeLimit
@@ -79,7 +79,7 @@ class GuidanceAndMaskingCallback(BaseCallback):
             name_to_action = base_env.name_to_action
             action_space_n = base_env.action_space.n
             
-            # Create action mask
+            # Create boolean action mask for MaskablePPO
             mask = np.zeros(action_space_n, dtype=bool)
             valid_candidates = []
             for name in candidate_names:
@@ -88,21 +88,20 @@ class GuidanceAndMaskingCallback(BaseCallback):
                     mask[action_idx] = True
                     valid_candidates.append(name)
             
-            # CRITICAL FIX: Always include SummaryAgent to allow episode termination
-            # This is a design decision, not a hack - SummaryAgent is essential for workflow completion
+            # This is a design decision — SummaryAgent is required for workflow completion.
             if 'SummaryAgent' in name_to_action:
                 summary_idx = name_to_action['SummaryAgent']
                 if not mask[summary_idx]:
                     mask[summary_idx] = True
                     valid_candidates.append('SummaryAgent')
             
-            # Ensure at least one action is valid
+            # Ensure there is at least one valid action
             if not mask.any():
                 if self.verbose > 0:
                     print(f"⚠️  WARNING: No valid candidates from {candidate_names}, allowing all actions")
                 mask[:] = True
             
-            # Store mask for ActionMasker wrapper to retrieve
+            # Store the mask for the ActionMasker wrapper to retrieve
             self.current_mask = mask
             
             self.guidance_calls += 1
@@ -124,7 +123,7 @@ class GuidanceAndMaskingCallback(BaseCallback):
 
 
 class MetricsCallback(BaseCallback):
-    """Callback để log custom metrics về rewards và success rate."""
+    """Callback to log custom metrics for rewards and success rate."""
     def __init__(self, log_dir: str = None, verbose: int = 0):
         super().__init__(verbose)
         self.episode_rewards = []
@@ -133,7 +132,7 @@ class MetricsCallback(BaseCallback):
         self.episode_count = 0
         self.log_dir = log_dir
         
-        # Create log file if log_dir provided
+        # Create a log file if log_dir is provided
         if self.log_dir:
             os.makedirs(self.log_dir, exist_ok=True)
             self.log_file = os.path.join(self.log_dir, 'training_log.txt')
@@ -145,13 +144,13 @@ class MetricsCallback(BaseCallback):
                 f.write("="*80 + "\n\n")
         
     def _on_step(self) -> bool:
-        # Check for episode end
+        # Check for episode termination
         if len(self.locals.get('dones', [])) > 0 and self.locals['dones'][0]:
             # Episode ended
             if 'infos' in self.locals and len(self.locals['infos']) > 0:
                 info = self.locals['infos'][0]
                 
-                # Track episode reward
+                    # Track episode reward and length
                 if 'episode' in info:
                     episode_reward = info['episode']['r']
                     episode_length = info['episode']['l']
@@ -160,8 +159,8 @@ class MetricsCallback(BaseCallback):
                     self.episode_lengths.append(episode_length)
                     self.episode_count += 1
                     
-                    # Check success using terminal reward from last step's info
-                    # Success = terminal reward is positive (R_term > 0)
+                    # Determine success using terminal reward from the last step's info
+                    # Success is indicated by a positive terminal reward (R_term > 0)
                     if 'rewards' in info and info['rewards'].get('terminal', 0) > 0:
                         self.success_count += 1
                     
@@ -194,7 +193,7 @@ class MetricsCallback(BaseCallback):
                         self.logger.record('rollout/ep_len_mean_100', avg_length)
                         self.logger.record('rollout/success_rate_100', success_rate)
                         
-                        # Reset success counter
+                        # Reset the success counter after logging
                         self.success_count = 0
         
         return True
@@ -203,24 +202,24 @@ class MetricsCallback(BaseCallback):
 def train_orchestrator_baseline(
     encoder_path: str = 'all-mpnet-base-v2',
     embedding_space_path: str = None,
-    action_encoder_path: str = None,  # NEW: For dual-encoder
-    use_dual_encoder: bool = False,   # NEW: Flag to use dual-encoder
+    action_encoder_path: str = None,  
+    use_dual_encoder: bool = False,   
     scenarios_data_dir: str = '../data/scenarios/data',
     kb_path: str = 'data/simulation_kb.json',
     output_dir: str = 'output/orchestrator_mlp_guided',
-    total_timesteps: int = 1000000,  # Tăng lên 1M để converge tốt hơn
-    learning_rate: float = 1e-4,     # Giảm LR để stable hơn
-    n_steps: int = 4096,             # Tăng để collect more experience
-    batch_size: int = 128,           # Tăng để stable updates
+    total_timesteps: int = 1000000,  # Increase to 1M for better convergence
+    learning_rate: float = 1e-4,     # Lower LR for stability
+    n_steps: int = 4096,             # Increase to collect more experience per rollout
+    batch_size: int = 128,           # Increase for more stable updates
     n_epochs: int = 20,              # More epochs per update
-    gamma: float = 0.95,             # Giảm để focus on immediate reward
+    gamma: float = 0.95,             # Lower to focus more on immediate reward
     gae_lambda: float = 0.95,
     clip_range: float = 0.2,
     top_k_guidance: int = 5,
     device: str = 'auto'
 ):
     """
-    Train Orchestrator với MLP + Guidance baseline.
+    Train Orchestrator with MLP + Guidance baseline.
     
     Args:
         encoder_path: Path to finetuned encoder model (StateEncoder if dual-encoder)
@@ -293,20 +292,20 @@ def train_orchestrator_baseline(
             import traceback
             traceback.print_exc()
     else:
-        print("   ℹ️  No embedding space path provided, training without guidance")
+            print("   ℹ️  No embedding space path provided, training without guidance")
     
     # --- 2. CREATE ENVIRONMENT ---
     print("\n🏗️  Creating environment...")
     
     def mask_fn(env):
-        """Mask function for ActionMasker - retrieves mask from guidance callback."""
+        """Mask function for ActionMasker — returns the mask from the guidance callback."""
         if guidance_callback is not None and guidance_callback.current_mask is not None:
             return guidance_callback.current_mask
         # Fallback: allow all actions
         return np.ones(env.action_space.n, dtype=bool)
     
     def make_env():
-        """Factory function to create environment."""
+        """Factory function that creates and wraps the environment."""
         env = ClinicalWorkflowEnv(
             encoder_model=encoder,
             scenarios_data_dir=scenarios_data_dir,
@@ -320,10 +319,10 @@ def train_orchestrator_baseline(
         env = ActionMasker(env, mask_fn)
         return env
     
-    # Wrap in DummyVecEnv (SB3 requirement)
+    # Wrap the environment in DummyVecEnv (SB3 requirement)
     env = DummyVecEnv([make_env])
     
-    # Normalize observations and rewards for stable training
+    # Normalize observations and rewards for more stable training
     env = VecNormalize(
         env,
         norm_obs=True,          # Normalize observations (already normalized by encoder, but doesn't hurt)
@@ -352,7 +351,7 @@ def train_orchestrator_baseline(
         gamma=gamma,
         gae_lambda=gae_lambda,
         clip_range=clip_range,
-        ent_coef=0.01,           # Tăng exploration
+        ent_coef=0.01,           # Increase exploration (encourage exploration)
         vf_coef=0.5,             # Weight value function loss
         max_grad_norm=0.5,       # Clip gradients
         verbose=1,
@@ -372,7 +371,7 @@ def train_orchestrator_baseline(
     
     callbacks = []
     
-    # Guidance callback
+    # Guidance callback (if available)
     if guidance_callback is not None:
         callbacks.append(guidance_callback)
         print(f"   ✓ Guidance callback added (top_k={top_k_guidance})")
@@ -382,7 +381,7 @@ def train_orchestrator_baseline(
     callbacks.append(metrics_callback)
     print(f"   ✓ Metrics callback added (logging to {output_dir})")
     
-    # Checkpoint callback
+    # Checkpoint callback for periodic saves
     os.makedirs(output_dir, exist_ok=True)
     checkpoint_callback = CheckpointCallback(
         save_freq=10000,
