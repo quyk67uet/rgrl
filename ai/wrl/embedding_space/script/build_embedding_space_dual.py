@@ -1,36 +1,35 @@
-"""
-GIAI ĐOẠN 1D: XÂY DỰNG DUAL EMBEDDING SPACE (Two-Tower Architecture)
-====================================================================
+"""Build dual embedding spaces (Two-Tower architecture).
 
-Script này sử dụng Dual-Encoder (StateEncoder + ActionEncoder) đã được fine-tuned 
-để tạo ra HAI embedding spaces riêng biệt:
-1. State Embedding Space: Chứa embeddings của Semantic State Prototypes
-2. Action Embedding Space: Chứa embeddings của Agents và Tools
+This script uses a tuned Dual-Encoder (StateEncoder + ActionEncoder) to
+produce two separate embedding spaces:
 
-KIẾN TRÚC:
-- StateEncoder mã hóa States
-- ActionEncoder mã hóa Actions (Agents + Tools)
-- Guidance sẽ search trong Action space bằng semantic state query
+- State Embedding Space: embeddings for semantic state prototypes
+- Action Embedding Space: embeddings for agents and tools
 
-WORKFLOW:
-1. Upload các file định nghĩa lên volume
-   $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json /definitions/vhas_universe.json
+Architecture:
+- `StateEncoder` encodes states
+- `ActionEncoder` encodes actions (agents + tools)
+- Guidance queries the Action space using a state-based semantic query
+
+Workflow (Modal):
+1. Upload definition files to the volume:
+    $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json /definitions/vhas_universe.json
     $ modal volume put vhas-training-data data/clinical_states/clinical_states.json /definitions/clinical_states.json
 
-2. Chạy script trên Modal
-   $ modal run build_embedding_space_dual.py
+2. Run on Modal:
+    $ modal run build_embedding_space_dual.py
 
-3. Download embedding spaces về local
-   $ modal volume get vhas-finetuned-output embedding_space_model_a_dual/ ../output/embedding_space_model_a_dual
-   $ modal volume get vhas-finetuned-output embedding_space_model_b_dual/ ../output/embedding_space_model_b_dual
+3. Download outputs to local:
+    $ modal volume get vhas-finetuned-output embedding_space_model_a_dual/ ../output/embedding_space_model_a_dual
+    $ modal volume get vhas-finetuned-output embedding_space_model_b_dual/ ../output/embedding_space_model_b_dual
 
-OUTPUT STRUCTURE (cho mỗi model):
-embedding_space_model_a_dual/
-    ├── state_embeddings.npy       # Semantic state prototypes embeddings (N_states, 768)
-  ├── action_embeddings.npy      # Actions embeddings (N_actions, 768)
-    ├── state_id_to_name.json      # Map từ ID -> Semantic state prototype text
-  ├── action_id_to_name.json     # Map từ ID -> Action name
-  └── owner_map.json             # Map từ tool name -> owner agent
+Output (per model):
+embedding_space_model_X_dual/
+  - state_embeddings.npy       # Semantic state prototype embeddings (N_states, D)
+  - action_embeddings.npy      # Action embeddings (N_actions, D)
+  - state_id_to_name.json      # ID -> state prototype text
+  - action_id_to_name.json     # ID -> action name
+  - owner_map.json             # tool name -> owner agent
 """
 
 import json
@@ -42,7 +41,7 @@ import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 
-# Định nghĩa Modal App và Image
+# Modal app and image definition
 app = modal.App("vhas-build-dual-embedding-space")
 
 image = (
@@ -55,7 +54,7 @@ image = (
     ])
 )
 
-# Kết nối các Modal Volumes
+# Connect Modal volumes
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 
@@ -85,21 +84,20 @@ def build_dual_space_for_model(
     states_file: str,
     output_dir: str
 ):
-    """
-    Tải Dual-Encoder (StateEncoder + ActionEncoder) và tạo ra hai embedding spaces riêng biệt.
-    
+    """Load Dual-Encoder models and build two embedding spaces.
+
     Args:
-        state_encoder_path: Path to StateEncoder model
-        action_encoder_path: Path to ActionEncoder model
+        state_encoder_path: Path to the state encoder model
+        action_encoder_path: Path to the action encoder model
         universe_file: Path to vhas_universe.json (agents + tools)
-        states_file: Path to semantic_state_prototypes.json
-        output_dir: Output directory for embedding spaces
+        states_file: Path to semantic state prototypes file
+        output_dir: Output directory to save embeddings and metadata
     """
     print(f"\n--- Building Dual Embedding Space ---")
     print(f"StateEncoder: {state_encoder_path}")
     print(f"ActionEncoder: {action_encoder_path}")
 
-    # 1. Tải Dual-Encoder models
+    # 1. Load Dual-Encoder models
     try:
         print("\nLoading Dual-Encoder models...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -113,7 +111,7 @@ def build_dual_space_for_model(
         print(f"ERROR: Could not load models. Error: {e}")
         return
 
-    # 2. Xây dựng Action Corpus (Agents + Tools)
+    # 2. Build action corpus (agents + tools)
     print("\nBuilding Action corpus (Agents + Tools)...")
     action_texts = []
     action_id_to_name = {}
@@ -145,7 +143,7 @@ def build_dual_space_for_model(
         print(f"ERROR: Universe file not found at {universe_file}.")
         return
 
-    # 3. Xây dựng State Corpus (Semantic State Prototypes)
+    # 3. Build state corpus (semantic state prototypes)
     print("\nBuilding State corpus (Semantic State Prototypes)...")
     state_texts = []
     state_id_to_name = {}
@@ -166,7 +164,7 @@ def build_dual_space_for_model(
         print(f"ERROR: Semantic State Space file not found at {states_file}.")
         return
 
-    # 4. Mã hóa Action Corpus với ActionEncoder
+    # 4. Encode action corpus with the action encoder
     print("\nEncoding Action corpus with ActionEncoder...")
     action_embeddings = action_encoder.encode(
         action_texts,
@@ -176,7 +174,7 @@ def build_dual_space_for_model(
     )
     print(f"   ✓ Action embeddings: {action_embeddings.shape}")
 
-    # 5. Mã hóa State Corpus với StateEncoder
+    # 5. Encode state corpus with the state encoder
     print("\nEncoding Semantic State corpus with StateEncoder...")
     state_embeddings = state_encoder.encode(
         state_texts,
@@ -186,18 +184,18 @@ def build_dual_space_for_model(
     )
     print(f"   ✓ State embeddings: {state_embeddings.shape}")
 
-    # 6. Lưu lại các "tài sản"
+    # 6. Save artifacts
     print(f"\nSaving to {output_dir}...")
     os.makedirs(output_dir, exist_ok=True)
     
-    # Save Action embeddings and metadata
+    # Save action embeddings and metadata
     np.save(os.path.join(output_dir, 'action_embeddings.npy'), action_embeddings)
     with open(os.path.join(output_dir, 'action_id_to_name.json'), 'w') as f:
         json.dump(action_id_to_name, f, indent=2)
     with open(os.path.join(output_dir, 'owner_map.json'), 'w') as f:
         json.dump(owner_map, f, indent=2)
     
-    # Save State embeddings and metadata
+    # Save state embeddings and metadata
     np.save(os.path.join(output_dir, 'state_embeddings.npy'), state_embeddings)
     with open(os.path.join(output_dir, 'state_id_to_name.json'), 'w') as f:
         json.dump(state_id_to_name, f, indent=2)
@@ -231,77 +229,70 @@ def build_dual_space_for_model(
 
 @app.local_entrypoint()
 def main():
-    """
-    Local entrypoint - chạy từ máy local để trigger các Modal functions
-    """
+    """Local entry to trigger the Modal functions from a local machine."""
     print("\n" + "="*70)
-    print("GIAI ĐOẠN 1D: XÂY DỰNG DUAL EMBEDDING SPACE")
+    print("STAGE 1D: BUILD DUAL EMBEDDING SPACES")
     print("="*70)
-    print("\nKiến trúc: Two-Tower (StateEncoder + ActionEncoder)")
-    print("\nBước này sẽ tạo ra 2 'bản đồ GPS song song' từ 2 mô hình đã fine-tuned:")
+    print("\nArchitecture: Two-Tower (StateEncoder + ActionEncoder)")
+    print("\nThis step builds two parallel embedding maps from two tuned models:")
     print("  - Model A (Base → Fine-tune): embedding_space_model_a_dual/")
     print("  - Model B (Base → Pre-train → Fine-tune): embedding_space_model_b_dual/")
-    print("\nMỗi bản đồ sẽ chứa:")
-    print("  - action_embeddings.npy: Ma trận (N_actions, 768) - Agents + Tools")
-    print("  - state_embeddings.npy: Ma trận (N_states, 768) - Semantic State Prototypes")
-    print("  - action_id_to_name.json: Ánh xạ ID → Action name")
-    print("  - state_id_to_name.json: Ánh xạ ID → Semantic state prototype text")
-    print("  - owner_map.json: Ánh xạ Tool → Owner Agent")
-    print("  - architecture_info.json: Thông tin kiến trúc")
+    print("\nEach output contains:")
+    print("  - action_embeddings.npy: matrix (N_actions, D) - Agents + Tools")
+    print("  - state_embeddings.npy: matrix (N_states, D) - Semantic state prototypes")
+    print("  - action_id_to_name.json: ID → Action name")
+    print("  - state_id_to_name.json: ID → Semantic state prototype text")
+    print("  - owner_map.json: Tool → Owner Agent")
+    print("  - architecture_info.json: metadata")
     print("="*70 + "\n")
-    
-    # Kiểm tra các file định nghĩa đã được upload chưa
+
+    # Check that the required definition files are present in the volume
     import subprocess
     import sys
-    
-    print("📋 Checking if Semantic State Space definition files exist in volume...")
+
+    print("Checking for required definition files in the volume...")
     result = subprocess.run(
         ["modal", "volume", "ls", "vhas-training-data", "/definitions"],
         capture_output=True,
-        text=True
+        text=True,
     )
-    
+
     if UNIVERSE_FILE.name not in result.stdout or STATES_FILE.name not in result.stdout:
-        print("\n❌ ERROR: Definition files not found in volume!")
-        print("\nBạn cần upload các file định nghĩa (Semantic State Space) trước:")
-        print(
-            "  $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json "
-            f"{UNIVERSE_FILE.as_posix()}"
-        )
-        print(
-            "  $ modal volume put vhas-training-data data/clinical_states/clinical_states.json "
-            f"{STATES_FILE.as_posix()}"
-        )
+        print("\nERROR: Required definition files not found in the volume.")
+        print("Please upload the definition files first:")
+        print("  $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json "
+              f"{UNIVERSE_FILE.as_posix()}")
+        print("  $ modal volume put vhas-training-data data/clinical_states/clinical_states.json "
+              f"{STATES_FILE.as_posix()}")
         sys.exit(1)
-    
-    print("✓ Semantic State Space definition files found in volume\n")
-    
-    # Chạy cho Model A
-    print("\n🚀 Building dual embedding space for Model A (Base → Fine-tune)...")
+
+    print("Definitions present in volume. Proceeding...\n")
+
+    # Launch build for Model A
+    print("Building dual embedding space for Model A (Base → Fine-tune)...")
     build_dual_space_for_model.remote(
         state_encoder_path=MODEL_A_STATE_PATH.as_posix(),
         action_encoder_path=MODEL_A_ACTION_PATH.as_posix(),
         universe_file=UNIVERSE_FILE.as_posix(),
         states_file=STATES_FILE.as_posix(),
-        output_dir=OUTPUT_A_DIR.as_posix()
+        output_dir=OUTPUT_A_DIR.as_posix(),
     )
-    
-    # Chạy cho Model B
-    print("\n🚀 Building dual embedding space for Model B (Base → Pre-train → Fine-tune)...")
+
+    # Launch build for Model B
+    print("Building dual embedding space for Model B (Base → Pre-train → Fine-tune)...")
     build_dual_space_for_model.remote(
         state_encoder_path=MODEL_B_STATE_PATH.as_posix(),
         action_encoder_path=MODEL_B_ACTION_PATH.as_posix(),
         universe_file=UNIVERSE_FILE.as_posix(),
         states_file=STATES_FILE.as_posix(),
-        output_dir=OUTPUT_B_DIR.as_posix()
+        output_dir=OUTPUT_B_DIR.as_posix(),
     )
 
     print("\n" + "="*70)
-    print("✅ ALL DUAL EMBEDDING SPACES HAVE BEEN GENERATED!")
+    print("ALL DUAL EMBEDDING SPACES HAVE BEEN QUEUED")
     print("="*70)
-    print("\n📦 Để download về local, chạy:")
+    print("To download results locally, run:")
     print("  $ modal volume get vhas-finetuned-output embedding_space_model_a_dual/ ../output/embedding_space_model_a_dual")
     print("  $ modal volume get vhas-finetuned-output embedding_space_model_b_dual/ ../output/embedding_space_model_b_dual")
-    print("\n🎉 GIAI ĐOẠN 1 (Data Preparation & Dual-Encoder Training) ĐÃ HOÀN THÀNH!")
-    print("="*70 + "\n")
+    print("" )
 

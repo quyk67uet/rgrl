@@ -200,9 +200,7 @@ def evaluate_dual_encoder_model(
 
 @app.local_entrypoint()
 def main():
-    """
-    Local entrypoint - chạy evaluation cho cả 2 models
-    """
+    """Local entrypoint - run evaluation for both models."""
     print("\n" + "="*80)
     print("DUAL-ENCODER EVALUATION: CROSS-MODAL RETRIEVAL (State → Action)")
     print("="*80)

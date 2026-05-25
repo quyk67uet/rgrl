@@ -6,18 +6,16 @@ from sentence_transformers.readers import InputExample
 from tqdm import tqdm
 
 def create_finetuning_pairs(batch_dir: str, universe_file: str, output_file: str):
-    """
-    Tạo các cặp dương (State Description, Action Description) từ các clinical traces
-    cho việc fine-tuning mô hình Encoder.
-    
+    """Create positive (State, Action) pairs from clinical traces for encoder fine-tuning.
+
     Args:
-        batch_dir: Thư mục chứa các batch files (batch_1/traces_1.json, ...)
-        universe_file: File chứa định nghĩa agents
-        output_file: File output để lưu training examples
+        batch_dir: Directory containing batch folders (batch_1/traces_1.json, ...)
+        universe_file: JSON file with agent definitions
+        output_file: Output JSON file to store training examples
     """
     print("--- Starting WRL Fine-tuning Data Preparation ---")
     
-    # 1. Xây dựng "Từ điển" Agent (Agent Corpus Map)
+    # 1. Build agent corpus map (Agent Corpus Map)
     print(f"Building agent corpus map from {universe_file}...")
     agent_corpus_map = {}
     try:
@@ -30,7 +28,7 @@ def create_finetuning_pairs(batch_dir: str, universe_file: str, output_file: str
         print(f"ERROR: Universe file not found at {universe_file}. Aborting.")
         return
 
-    # 2. Lặp qua các batch files và trích xuất cặp
+    # 2. Iterate batch files and extract (State, Action) pairs
     print(f"Processing clinical traces from batch files in '{batch_dir}'...")
     training_examples = []
     
@@ -38,9 +36,9 @@ def create_finetuning_pairs(batch_dir: str, universe_file: str, output_file: str
         print(f"ERROR: Batch directory not found at '{batch_dir}'.")
         return
     
-    # Đọc từ 8 batch files
+    # Read up to 8 batch folders
     total_traces = 0
-    for batch_num in range(1, 9):  # batch_1 đến batch_8
+    for batch_num in range(1, 9):  # batch_1 to batch_8
         batch_folder = os.path.join(batch_dir, f'batch_{batch_num}')
         trace_file = os.path.join(batch_folder, f'traces_{batch_num}.json')
         
@@ -61,14 +59,14 @@ def create_finetuning_pairs(batch_dir: str, universe_file: str, output_file: str
                         attributes = span.get('attributes', {})
                         if attributes.get('vhas.span.type') == 'orchestrator_decision':
                             
-                            # Trích xuất State và Action
+                            # Extract State and Action
                             state_description = attributes.get('vhas.orchestrator.input_state')
                             action_name = attributes.get('vhas.orchestrator.action_selected')
-                            
-                            # Tra cứu mô tả đầy đủ của Action
+
+                            # Lookup full action description from the agent corpus
                             action_description = agent_corpus_map.get(action_name)
-                            
-                            # Chỉ tạo cặp nếu tất cả thông tin đều hợp lệ
+
+                            # Only add pair when both state and action description are present
                             if state_description and action_description:
                                 training_examples.append({"texts": [state_description, action_description]})
 
@@ -79,7 +77,7 @@ def create_finetuning_pairs(batch_dir: str, universe_file: str, output_file: str
     print(f"\n✓ Processed {total_traces} traces from 8 batches")
     print(f"✓ Generated {len(training_examples)} (State, Action) pairs")
 
-    # 3. Lưu kết quả
+    # 3. Save results
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
     
     print(f"\nSaving {len(training_examples)} fine-tuning examples to '{output_file}'...")
@@ -90,24 +88,24 @@ def create_finetuning_pairs(batch_dir: str, universe_file: str, output_file: str
     print("You now have the specialized 'textbooks' to fine-tune the Encoder.")
 
 if __name__ == "__main__":
-    # Xây dựng đường dẫn tương đối dựa trên vị trí script
+    # Build relative paths based on script location
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    finetuning_dir = os.path.dirname(script_dir)  # d:/VHAS/data/finetuning
-    data_root = os.path.dirname(finetuning_dir)   # d:/VHAS/data
-    vhas_root = os.path.dirname(data_root)        # d:/VHAS
-    
-    # Đường dẫn đến các file input
+    finetuning_dir = os.path.dirname(script_dir)  
+    data_root = os.path.dirname(finetuning_dir)  
+    vhas_root = os.path.dirname(data_root)       
+
+    # Input paths
     BATCH_DIR = os.path.join(data_root, 'scenarios', 'data')
     UNIVERSE_FILE = os.path.join(vhas_root, 'vhas-demo', 'backend', 'vhas_universe.json')
-    
-    # Đường dẫn file output
+
+    # Output path
     OUTPUT_FILE = os.path.join(finetuning_dir, 'data', 'wrl_finetuning_examples.json')
-    
-    print(f"📂 Input paths:")
+
+    print(f"Input paths:")
     print(f"   Batch dir: {BATCH_DIR}")
     print(f"   Universe: {UNIVERSE_FILE}")
     print(f"   Output: {OUTPUT_FILE}\n")
-    
+
     create_finetuning_pairs(
         batch_dir=BATCH_DIR,
         universe_file=UNIVERSE_FILE,

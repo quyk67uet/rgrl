@@ -1,36 +1,26 @@
-"""
-GIAI ĐOẠN 1D (REVISED): XÂY DỰNG EMBEDDING SPACE - NO STATES VERSION
-======================================================================
+"""Build embedding spaces containing only actionable entities (no states).
 
-Script này tạo embedding space CHỈ với Agents + Tools, KHÔNG bao gồm States.
+This revised script creates embedding spaces that include agents and tools
+only. States are excluded because they are used as queries for guidance
+rather than as actionable outputs; including states can dilute search
+results and reduce retrieval quality.
 
-RATIONALE:
-- States là INPUT cho guidance (query), không phải OUTPUT (actions)
-- Bao gồm states trong embedding space gây "pha loãng" kết quả tìm kiếm
-- Với 46 entities (5 agents + 6 tools + 35 states), guidance chỉ tìm được 2-3 agents
-- Loại bỏ states → chỉ còn 11 entities → guidance luôn tìm đủ 5 agents
+Workflow (Modal):
+1. Upload `vhas_universe.json` to the training volume:
+    $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json /definitions/vhas_universe.json
 
-WORKFLOW:
-1. Upload file định nghĩa (chỉ cần vhas_universe.json)
-   $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json /definitions/vhas_universe.json
+2. Run on Modal:
+    $ modal run build_embedding_space_no_states.py
 
-2. Chạy script trên Modal
-   $ modal run build_embedding_space_no_states.py
+3. Download outputs:
+    $ modal volume get vhas-finetuned-output embedding_space_base_no_states ./output/embedding_space_base_no_states
+    $ modal volume get vhas-finetuned-output embedding_space_pretrained_no_states ./output/embedding_space_pretrained_no_states
 
-3. Download embedding spaces về local
-   $ modal volume get vhas-finetuned-output embedding_space_base_no_states ./output/embedding_space_base_no_states
-   $ modal volume get vhas-finetuned-output embedding_space_pretrained_no_states ./output/embedding_space_pretrained_no_states
-
-OUTPUT STRUCTURE:
-embedding_space_base_no_states/
-  ├── embeddings.npy       # Numpy array (11, 768) - chỉ Agents + Tools
-  ├── id_to_name.json      # Map từ ID -> tên entity
-  └── owner_map.json       # Map từ tool name -> owner agent
-
-embedding_space_pretrained_no_states/
-  ├── embeddings.npy
-  ├── id_to_name.json
-  └── owner_map.json
+Output:
+embedding_space_*_no_states/
+  - embeddings.npy       # Numpy array (N, D) - Agents + Tools only
+  - id_to_name.json      # ID -> entity name
+  - owner_map.json       # tool name -> owner agent
 """
 
 import json
@@ -40,7 +30,7 @@ from sentence_transformers import SentenceTransformer
 import torch
 import modal
 
-# Định nghĩa Modal App và Image
+# Modal app and image definition
 app = modal.App("vhas-build-embedding-space-no-states")
 
 image = (
@@ -53,23 +43,22 @@ image = (
     ])
 )
 
-# Kết nối các Modal Volumes
+# Connect Modal volumes
 training_data_vol = modal.Volume.from_name("vhas-training-data", create_if_missing=False)
 finetuned_output_vol = modal.Volume.from_name("vhas-finetuned-output", create_if_missing=False)
 
 @app.function(
     image=image,
-    gpu="T4",  # Sử dụng T4 GPU cho inference nhanh
-    timeout=1800,  # 30 phút
+    gpu="T4",  # Use T4 GPU for faster inference
+    timeout=1800,  # 30 minutes
     volumes={
         "/definitions": training_data_vol,
         "/data": finetuned_output_vol,  # Mount 1 lần, chứa cả models và output
     },
 )
 def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
-    """
-    Tải một Encoder model đã huấn luyện và tạo embedding space CHỈ với Agents + Tools.
-    
+    """Load a tuned encoder and build an embedding space for agents+tools.
+
     Args:
         model_path: Path to the encoder model
         universe_file: Path to vhas_universe.json (agents + tools)
@@ -77,7 +66,7 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
     """
     print(f"\n--- Building Embedding Space (NO STATES) for model at: {model_path} ---")
 
-    # 1. Tải mô hình Encoder đã được fine-tune
+    # 1. Load the tuned encoder model
     try:
         print("Loading fine-tuned encoder model...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -86,7 +75,7 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
         print(f"ERROR: Could not load model from {model_path}. Error: {e}")
         return
 
-    # 2. Xây dựng Corpus CHỈ với Agents + Tools (NO STATES)
+    # 2. Build corpus with agents + tools only (no states)
     print("Building corpus (Agents + Tools only, NO states)...")
     corpus_texts = []
     id_to_name = {}
@@ -94,7 +83,7 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
     
     current_id = 0
     
-    # Tải Agents và Tools
+    # Load agents and tools from the universe file
     try:
         with open(universe_file, 'r', encoding='utf-8') as f:
             universe = json.load(f)
@@ -120,17 +109,15 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
         print(f"ERROR: Universe file not found at {universe_file}.")
         return
 
-    # REMOVED: Clinical States section
-    # States are query inputs (not actionable entities)
-    # Including them dilutes search results and causes guidance to fail
+    # Clinical states are intentionally excluded (they're query inputs)
         
     print(f"✓ Corpus built with {len(corpus_texts)} total entities:")
     print(f"  - Agents: {num_agents}")
     print(f"  - Tools: {num_tools}")
     print(f"  - States: 0 (excluded by design)")
 
-    # 3. Mã hóa toàn bộ Corpus
-    print("Encoding the entire corpus... (This may take a moment)")
+    # 3. Encode the corpus
+    print("Encoding the entire corpus... (this may take a moment)")
     corpus_embeddings = encoder_model.encode(
         corpus_texts, 
         convert_to_numpy=True,
@@ -138,7 +125,7 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
         batch_size=128
     )
 
-    # 4. Lưu lại các "tài sản"
+    # 4. Save artifacts
     os.makedirs(output_dir, exist_ok=True)
     
     np.save(os.path.join(output_dir, 'embeddings.npy'), corpus_embeddings)
@@ -147,7 +134,7 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
     with open(os.path.join(output_dir, 'owner_map.json'), 'w') as f:
         json.dump(owner_map, f, indent=2)
             
-    print(f"--- Embedding Space successfully built and saved to '{output_dir}' ---")
+    print(f"--- Embedding space saved to '{output_dir}' ---")
     print(f"    Total embeddings: {corpus_embeddings.shape[0]}")
     print(f"    Embedding dimension: {corpus_embeddings.shape[1]}")
     
@@ -158,83 +145,71 @@ def build_space_for_model(model_path: str, universe_file: str, output_dir: str):
 
 @app.local_entrypoint()
 def main():
-    """
-    Local entrypoint - chạy từ máy local để trigger các Modal functions
-    """
-    # File định nghĩa (mounted từ training_data_vol)
+    """Local entry to trigger the Modal functions from a local machine."""
+    # Definition file (mounted from training_data_vol)
     UNIVERSE_FILE = '/definitions/definitions/vhas_universe.json'
-    
-    # Các đường dẫn đến 2 model đã được fine-tune
+
+    # Paths to two tuned models (mounted under /data)
     MODEL_A_PATH = '/data/model_a'
     MODEL_B_PATH = '/data/model_b'
-    
-    # Các thư mục output mới (với suffix _no_states)
+
+    # Output directories (suffix _no_states)
     OUTPUT_A_DIR = '/data/embedding_space_base_no_states'
     OUTPUT_B_DIR = '/data/embedding_space_pretrained_no_states'
-    
+
     print("\n" + "="*70)
-    print("GIAI ĐOẠN 1D (REVISED): XÂY DỰNG EMBEDDING SPACE - NO STATES")
+    print("STAGE 1D (REVISED): BUILD EMBEDDING SPACE - NO STATES")
     print("="*70)
-    print("\n🎯 Mục tiêu: Tạo embedding space CHỈ với actionable entities")
-    print("\nBước này sẽ tạo ra 2 'bản đồ GPS' từ 2 mô hình đã fine-tuned:")
+    print("Goal: Build embedding spaces that include actionable entities only (agents + tools)")
+    print("This step will create two maps from two tuned models:")
     print("  - Model A: embedding_space_base_no_states/")
     print("  - Model B: embedding_space_pretrained_no_states/")
-    print("\nMỗi bản đồ sẽ chứa:")
-    print("  - embeddings.npy: Ma trận (11, 768) với 11 = 5 Agents + 6 Tools")
-    print("  - id_to_name.json: Ánh xạ ID → Tên entity")
-    print("  - owner_map.json: Ánh xạ Tool → Owner Agent")
-    print("\n💡 Lợi ích:")
-    print("  - Loại bỏ 35 states (76% corpus) gây nhiễu")
-    print("  - Guidance sẽ LUÔN tìm đủ 5 agents")
-    print("  - Không cần hard-code force-add SummaryAgent")
-    print("  - Kết quả tìm kiếm chính xác hơn")
-    print("="*70 + "\n")
-    
-    # Kiểm tra file định nghĩa đã được upload chưa
+    print("Each output will contain:")
+    print("  - embeddings.npy: matrix with Agents + Tools")
+    print("  - id_to_name.json: ID → entity name")
+    print("  - owner_map.json: Tool → owner agent")
+    print("" )
+
+    # Check that the universe definition has been uploaded
     import subprocess
     import sys
-    
-    print("📋 Checking if definition file exists in volume...")
+
+    print("Checking for the universe definition in volume...")
     result = subprocess.run(
         ["modal", "volume", "ls", "vhas-training-data", "/definitions"],
         capture_output=True,
-        text=True
+        text=True,
     )
-    
+
     if "vhas_universe.json" not in result.stdout:
-        print("\n❌ ERROR: vhas_universe.json not found in volume!")
-        print("\nBạn cần upload file định nghĩa trước:")
+        print("ERROR: vhas_universe.json not found in the volume.")
+        print("Please upload the universe definition:")
         print("  $ modal volume put vhas-training-data vhas-demo/backend/vhas_universe.json /definitions/vhas_universe.json")
         sys.exit(1)
-    
-    print("✓ Definition file found in volume\n")
-    
-    # Chạy cho Model A
-    print("\n🚀 Building embedding space for Model A (Base → Fine-tune)...")
+
+    print("Definition file found. Proceeding...\n")
+
+    # Launch build for Model A
+    print("Building embedding space for Model A (Base → Fine-tune)...")
     build_space_for_model.remote(
         model_path=MODEL_A_PATH,
         universe_file=UNIVERSE_FILE,
-        output_dir=OUTPUT_A_DIR
+        output_dir=OUTPUT_A_DIR,
     )
-    
-    # Chạy cho Model B  
-    print("\n🚀 Building embedding space for Model B (Base → Pre-train → Fine-tune)...")
+
+    # Launch build for Model B
+    print("Building embedding space for Model B (Base → Pre-train → Fine-tune)...")
     build_space_for_model.remote(
         model_path=MODEL_B_PATH,
         universe_file=UNIVERSE_FILE,
-        output_dir=OUTPUT_B_DIR
+        output_dir=OUTPUT_B_DIR,
     )
 
     print("\n" + "="*70)
-    print("✅ ALL EMBEDDING SPACES (NO STATES) HAVE BEEN GENERATED!")
+    print("ALL NO-STATES EMBEDDING SPACES HAVE BEEN QUEUED")
     print("="*70)
-    print("\n📦 Để download về local, chạy:")
+    print("To download results locally, run:")
     print("  $ modal volume get vhas-finetuned-output embedding_space_base_no_states/ ./output/embedding_space_base_no_states")
     print("  $ modal volume get vhas-finetuned-output embedding_space_pretrained_no_states/ ./output/embedding_space_pretrained_no_states")
-    print("\n🔄 Tiếp theo:")
-    print("  1. Embedding spaces đã được tạo trên Modal volume vhas-finetuned-output")
-    print("  2. Update train_orchestrator_sb3.py để dùng embedding spaces mới")
-    print("  3. Chạy lại training experiments")
-    print("\n🎉 Embedding spaces mới sẽ giải quyết vấn đề guidance!")
-    print("="*70 + "\n")
+    print("" )
 
