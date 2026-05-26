@@ -6,8 +6,6 @@ The primary objective of this work is to address the combinatorial explosion of 
 
 ---
 
----
-
 ## 1. System Architecture
 
 The RGRL framework is implemented in two offline-online stages, integrating a dual-system inference routing mechanism during deployment:
@@ -213,7 +211,7 @@ To execute the actual evaluation logic over the held-out Test Set (200 cases) us
 ```bash
 python ai/experiments/evaluate_tradeoff.py
 ```
-*This script iterates through $\tau$ values, prints GNN/LLM logs to the terminal, and exports metrics to `ai/results/pareto_tradeoff_results.csv`.*
+*This script iterates through τ values, prints GNN/LLM logs to the terminal, and exports metrics to `ai/results/pareto_tradeoff_results.csv`.*
 
 <p align="center">
   <img src="ai/results/figures/exp1_pareto_tradeoff.png" width="70%" alt="Pareto Tradeoff" />
