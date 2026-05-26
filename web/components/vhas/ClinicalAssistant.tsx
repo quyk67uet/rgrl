@@ -139,13 +139,12 @@ export function ClinicalAssistant() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Quick Examples:</span>
               <Badge
                 onClick={() => {
                   setPatientId("ED-83012");
                   setComplaint("83-year-old female with a history of a permanent pacemaker. Presents with dizziness, weakness, and palpitations. Pacemaker interrogation notes Atrial Fibrillation.");
                 }}
-                className="cursor-pointer border border-slate-200 bg-white py-1.5 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                className="cursor-pointer border border-blue-200 bg-blue-50 py-1.5 px-3 text-xs font-semibold text-blue-700 transition-colors hover:bg-blue-100"
               >
                 Case 1: 83yo Female (AFib - System 1)
               </Badge>
@@ -154,7 +153,7 @@ export function ClinicalAssistant() {
                   setPatientId("ED-45091");
                   setComplaint("45-year-old male presenting with sudden onset of severe, diffuse epigastric pain and nausea. History of heavy alcohol use.");
                 }}
-                className="cursor-pointer border border-slate-200 bg-white py-1.5 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                className="cursor-pointer border border-amber-200 bg-amber-50 py-1.5 px-3 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100"
               >
                 Case 2: 45yo Male (Epigastric Pain - HITL)
               </Badge>
@@ -163,7 +162,7 @@ export function ClinicalAssistant() {
                   setPatientId("ED-58043");
                   setComplaint("58-year-old male presenting with heavy epigastric pressure, nausea, and significant diaphoresis. History of smoking.");
                 }}
-                className="cursor-pointer border border-slate-200 bg-white py-1.5 px-3 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100"
+                className="cursor-pointer border border-emerald-200 bg-emerald-50 py-1.5 px-3 text-xs font-semibold text-emerald-700 transition-colors hover:bg-emerald-100"
               >
                 Case 3: 58yo Male (Atypical Cardiac - System 2)
               </Badge>
