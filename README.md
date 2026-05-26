@@ -6,9 +6,15 @@ The primary objective of this work is to address the combinatorial explosion of 
 
 ---
 
+---
+
 ## 1. System Architecture
 
-The RGRL framework is implemented in two offline-online stages, integrated with a dual-system inference routing mechanism during deployment:
+The RGRL framework is implemented in two offline-online stages, integrating a dual-system inference routing mechanism during deployment:
+
+<p align="center">
+  <img src="ai/results/figures/overall_framework.jpg" width="85%" alt="RGRL Overall Framework" />
+</p>
 
 ### Stage 1: Workflow Representation Learning (WRL) [Offline]
 - **Methodology:** A Dual-Encoder architecture (StateEncoder \& ActionEncoder) optimized via self-supervised Contrastive Learning (Multiple Negatives Ranking Loss).
@@ -18,15 +24,34 @@ The RGRL framework is implemented in two offline-online stages, integrated with 
 - **Methodology:** Proximal Policy Optimization (PPO) combined with dynamic, representation-guided Action Masking.
 - **Function:** At each decision step, the orchestrator queries the Knowledge Map to retrieve the $k$-nearest valid actions, generating a binary mask at the logit level. This strictly constrains RL exploration to compliant actions, preventing standard RL from suffering under sparse rewards.
 
+---
+
 ### System 1: The Agent-Flow Attention Network (AFAN) & RSL-RL Integration
 System 1 serves as our primary, high-speed structural orchestration policy. It models the complete workflow history as a heterogeneous directed graph ($\mathcal{G}_t$) using Graph Attention Networks (GATv2Conv). 
+
+<p align="center">
+  <img src="ai/results/figures/afan_architecture.jpg" width="90%" alt="AFAN GNN Architecture" />
+</p>
+
 - **The RSL-RL Customization:** Traditional RL libraries (such as Stable-Baselines3) strictly require fixed-dimensional, flat tensor observations, making them incompatible with the dynamic, variable-sized graph structures (`HeteroData`) required by GNNs. 
 - To overcome this structural limitation, we customized the high-throughput **RSL-RL** framework. By leveraging PyTorch's `TensorDict` data structures, we packed node features, edge indices, and action masks into a single padded structure. 
 - Inside our custom `ActorCriticGNN` policy, we implemented a GPU-optimized `_reconstruct_hetero_batch` algorithm. It dynamically unpads the `TensorDict` on-the-fly, reconstructs the clean heterogeneous graph topology, executes heterogeneous message passing, and pools the final graph embedding to feed the Actor-Critic heads, enabling stable end-to-end PPO training on dynamic graphs.
 
+---
+
 ### System 2: Deliberative Reasoning Fallback (Compliance Guardrail)
 Activated as a safety fallback when System 1 confidence $C_t$ falls below the safety threshold ($\tau = 0.85$). 
+
+<p align="center">
+  <img src="ai/results/figures/dual_system_router.jpg" width="85%" alt="Dual-System Router" />
+</p>
+
 - **Mechanism:** Inspired by dual-process theories of cognition, it runs an iterative reasoning pipeline utilizing a 3-agent loop (**Generator $\rightarrow$ Verifier $\rightarrow$ Reviser**) to enforce hard constraints and self-correct structural deviations before final execution.
+
+<p align="center">
+  <img src="ai/results/figures/deliberative_pipeline.jpg" width="80%" alt="Deliberative Reasoning Pipeline" />
+</p>
+
 - **Human-in-the-Loop (HITL):** Suspends execution and escalates to a human domain expert if System 2 fails to reach a verified compliant consensus within $N_{max} = 3$ retries.
 
 ---
@@ -184,17 +209,25 @@ python ai/data/workflow_traces/prepare_splits.py
 ### Running Evaluation Experiments
 To execute the actual evaluation logic over the held-out Test Set (200 cases) using the real inference pipelines:
 
-**1. Run Pareto Trade-off Analysis ($\tau$ Sweep):**
+**1. Execute Pareto Trade-off Analysis ($\tau$ Sweep):**
 ```bash
 python ai/experiments/evaluate_tradeoff.py
 ```
 *This script iterates through $\tau$ values, prints GNN/LLM logs to the terminal, and exports metrics to `ai/results/pareto_tradeoff_results.csv`.*
 
-**2. Run System 2 Ablation Study:**
+<p align="center">
+  <img src="ai/results/figures/exp1_pareto_tradeoff.png" width="70%" alt="Pareto Tradeoff" />
+</p>
+
+**2. Execute System 2 Ablation Study:**
 ```bash
 python ai/experiments/evaluate_ablation.py
 ```
 *This script compares policy configurations and exports metrics to `ai/results/system2_ablation_results.csv`.*
+
+<p align="center">
+  <img src="ai/results/figures/exp2_ablation_study.png" width="75%" alt="System 2 Ablation Study" />
+</p>
 
 **3. Run Complete Policy Evaluation (Table 3.4 & Boxplot generation):**
 ```bash
@@ -215,6 +248,11 @@ python ai/results/plot_training_results.py
 ```
 *The newly plotted figures will be saved directly into the `ai/results/figures/` folder.*
 
+<p align="center">
+  <img src="ai/results/figures/learning_curves_2.png" width="80%" alt="Learning Curves" />
+  <img src="ai/results/figures/guideline_compliance_boxplot.png" width="45%" alt="Guideline Compliance Boxplot" />
+</p>
+
 ### Running the Web Demo Database (Optional)
 The Next.js UI connects to a PostgreSQL database managed by the FastAPI backend.
 
@@ -233,3 +271,9 @@ python web/backend/seed_tracestore.py
 python web/backend/api.py
 ```
 *The REST documentation will be accessible at `http://localhost:8001/docs`.*
+
+<p align="center">
+  <img src="ai/results/figures/vhas_web_ui_demo.jpg" width="90%" alt="VHAS Web UI Demo" />
+</p>
+
+---
