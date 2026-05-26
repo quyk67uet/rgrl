@@ -237,7 +237,7 @@ python ai/experiments/evaluate_all_policies.py
 ```bash
 python ai/experiments/evaluate_topk_ablation.py
 ```
-*This script evaluates GNN behavior under different $k$ masking thresholds, exporting data to `ai/results/ablation_topk.csv`.*
+*This script evaluates GNN behavior under different k masking thresholds, exporting data to `ai/results/ablation_topk.csv`.*
 
 ### Regenerating Publication Figures
 To programmatically regenerate the training dynamics plot (`learning_curves_2.png`) and success rate distribution (`guideline_compliance_boxplot.png`) directly from the raw evaluation logs:
