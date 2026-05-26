@@ -417,7 +417,7 @@ export function ClinicalAssistant() {
         </Card>
       )}
 
-      {selectedPathway && (
+      {selectedPathway && !isHitlTriggered && (
         <div className="space-y-4 animate-fade-in">
           <div className="flex justify-between items-center bg-slate-50 px-4 py-3 rounded-lg border border-slate-100">
             <span className="text-sm font-semibold text-slate-700">Compliance Pathway: {selectedPathway}</span>
