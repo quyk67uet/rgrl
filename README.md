@@ -1,8 +1,10 @@
 # Representation-Guided Reinforcement Learning for Guideline-Compliant Multi-Agent Orchestration
 
-This repository contains the official implementation of the **VHAS (Vietnam Health-Agent System)**, a testbed designed to evaluate the **Representation-Guided Reinforcement Learning (RGRL)** framework. 
+This repository contains the official, production-ready implementation of the **VHAS (Vietnam Health-Agent System)**, a testbed designed to evaluate the **Representation-Guided Reinforcement Learning (RGRL)** framework. 
 
-The primary objective of this work is to address the combinatorial explosion of state and action spaces in multi-agent reinforcement learning (RL) when operating in environments characterized by high-dimensional, unstructured text inputs (Semantic Variability). The proposed system enforces strict adherence to predefined operational protocols (Guideline Compliance) via a Neuro-Symbolic Dual-System architecture.
+The primary objective of this work is to address the combinatorial explosion of state and action spaces in multi-agent reinforcement learning (RL) when operating in environments characterized by high-dimensional, unstructured text inputs. The proposed system enforces strict guideline compliance via an uncertainty-aware, Neuro-Symbolic Dual-System reasoning architecture.
+
+---
 
 ---
 
@@ -14,13 +16,13 @@ The RGRL framework is implemented in two offline-online stages, integrating a du
   <img src="ai/results/figures/overall_framework.jpg" width="85%" alt="RGRL Overall Framework" />
 </p>
 
-### Stage 1: Workflow Representation Learning (WRL)
-- **Methodology:** A Dual-Encoder architecture optimized via self-supervised Contrastive Learning (Multiple Negatives Ranking Loss).
-- **Function:** Maps highly variable textual contexts (Semantic States) and static entity specifications (Agents/Tools) into a unified, continuous embedding space, forming a static Knowledge Map.
+### Stage 1: Workflow Representation Learning (WRL) [Offline]
+- **Methodology:** A Dual-Encoder architecture (StateEncoder \& ActionEncoder) optimized via self-supervised Contrastive Learning (Multiple Negatives Ranking Loss).
+- **Function:** Maps highly variable textual contexts (Semantic States) and static entity specifications (Actions) into a unified, continuous embedding space, forming a static Knowledge Map.
 
-### Stage 2: Guided Reinforcement Optimization (GRO)
-- **Methodology:** Proximal Policy Optimization (PPO) combined with dynamic Action Masking.
-- **Function:** At each timestep, the system queries the Knowledge Map to retrieve top-$k$ relevant entities, generating a binary mask. This masks invalid logits before the Softmax layer, pruning the action space and stabilizing RL convergence.
+### Stage 2: Guided Reinforcement Optimization (GRO) [Online]
+- **Methodology:** Proximal Policy Optimization (PPO) combined with dynamic, representation-guided Action Masking.
+- **Function:** At each decision step, the orchestrator queries the Knowledge Map to retrieve the $k$-nearest valid actions, generating a binary mask at the logit level. This strictly constrains RL exploration to compliant actions, preventing standard RL from suffering under sparse rewards.
 
 ---
 
@@ -56,86 +58,150 @@ Activated as a safety fallback when System 1 confidence $C_t$ falls below the sa
 
 ## 2. Repository Structure
 
-The codebase is modularized to separate core algorithms, evaluation logic, and reproducibility scripts.
-
 ```text
-THESIS_RGRL/
+rgrl/
 ├── ai/
-│   ├── data/                   # Synthetic benchmark dataset (2,000 traces)
-│   │   ├── scenarios/          # Extracted clinical contexts
-│   │   └── workflow_traces/    # Raw traces + ML splits (train/val/test)
+│   ├── data/                           # Dataset and clinical scenarios
+│   │   ├── clinical_notes/             # Processed clinical notes from MIMIC-IV
+│   │   │   ├── data/
+│   │   │   └── script/
+│   │   ├── clinical_states/            # Definitions of the 35 Semantic Prototypes
+│   │   │   └── clinical_states.json
+│   │   ├── scenarios/                  # Curated task scenarios
+│   │   │   ├── data/
+│   │   │   └── script/
+│   │   ├── vhas_universe/              # Agent and Tool declarations
+│   │   │   └── vhas_universe.json
+│   │   ├── workflow_skeletons/         # The 3 Ground-Truth Skeletons
+│   │   │   └── workflow_skeletons.json
+│   │   └── workflow_traces/            # Raw traces and split JSON files
+│   │       ├── cardiovascular/
+│   │       ├── gastrointestinal/
+│   │       ├── respiratory/
+│   │       ├── prepare_splits.py       # Data stratification script
+│   │       ├── test_traces.json        # 200 held-out evaluation samples
+│   │       ├── train_traces.json       # 1,600 training samples
+│   │       └── val_traces.json         # 200 validation samples
 │   │
-│   ├── wrl/                    # Stage 1 implementation
-│   │   ├── pretraining/        # Scripts for ADP/T1 corpus pretraining
-│   │   └── finetuning/         # Scripts for contrastive learning on domain traces
+│   ├── dual_system/                    # Inference and Routing implementation
+│   │   ├── __init__.py
+│   │   ├── deliberative_llm.py         # Generator-Verifier-Reviser pipeline
+│   │   ├── neuro_symbolic_router.py    # GNN confidence-based routing wrapper
+│   │   └── prompts.py                  # Strict operational guideline definitions
 │   │
-│   ├── gro/                    # Stage 2 implementation
-│   │   ├── simulation/         # Custom Gymnasium environment with rule-based transitions
-│   │   └── scripts/            # PPO training loops for MLP, Transformer, and GNN
+│   ├── experiments/                    # Official evaluation scripts for thesis metrics
+│   │   ├── __init__.py
+│   │   ├── evaluate_ablation.py        # System 2 structural ablation study
+│   │   ├── evaluate_all_policies.py    # Master script evaluating all 4 policies
+│   │   ├── evaluate_topk_ablation.py   # Top-k ablation study for GNN
+│   │   └── evaluate_tradeoff.py        # Pareto analysis over tau thresholds
 │   │
-│   ├── dual_system/            # Inference and Routing implementation
-│   │   ├── neuro_symbolic_router.py # Threshold-based delegation logic
-│   │   ├── deliberative_llm.py      # Generator-Verifier-Reviser pipeline
-│   │   └── prompts.py               # Strict operational guideline definitions
+│   ├── gro/                            # Stage 2: Reinforcement Learning modules
+│   │   ├── data/
+│   │   │   └── simulation_kb.json      # Deterministic finite-state machine transitions
+│   │   ├── gnn/                        # AFAN GNN architecture and PyG env/train
+│   │   │   ├── actor_critic_gnn.py     # Custom GNN Actor-Critic policy network
+│   │   │   ├── env.py                  # GNN specific episodic environment
+│   │   │   ├── train_gnn_deployed.py   # GNN training deployment (Modal)
+│   │   │   ├── train.py                # Local training script for GNN
+│   │   │   ├── upload_gnn_to_modal.ps1
+│   │   │   ├── vec_env_wrapper.py
+│   │   │   └── wrappers.py
+│   │   ├── scripts/                    # KB building and legacy helpers
+│   │   │   ├── build_simulation_kb.py
+│   │   │   ├── guidance_dual.py
+│   │   │   └── guidance.py
+│   │   ├── simulation/                 # Flat vector environment (MLP)
+│   │   │   ├── __init__.py
+│   │   │   └── env.py
+│   │   ├── transformer/                # Sequential policy and sequential env
+│   │   │   ├── env.py                  # Transformer specific sequential env
+│   │   │   ├── policy_model.py
+│   │   │   ├── train_transformer.py    # Local training script for Transformer
+│   │   │   ├── train_transformer_deployed.py
+│   │   │   └── upload_transformer_to_modal.ps1
+│   │   ├── train_mlp.py                # Local training script for MLP
+│   │   ├── train_model_a_deployed.py   # Model A training deployment (Modal)
+│   │   ├── train_model_b_deployed.py   # Model B training deployment (Modal)
+│   │   ├── train_no_guidance_deployed.py # Vanilla RL training deployment (Modal)
+│   │   └── train_topk_ablation_deployed.py # Top-k evaluation deployment (Modal)
 │   │
-│   ├── experiments/            # Real evaluation logic for thesis metrics
-│   │   ├── evaluate_tradeoff.py     # Pareto analysis over tau thresholds
-│   │   └── evaluate_ablation.py     # System 2 structural ablation study
+│   ├── results/                        # Empirical result logs and visualizations
+│   │   ├── figures/                    # Generated high-resolution plots used in the thesis
+│   │   │   ├── exp1_pareto_tradeoff.png
+│   │   │   ├── exp2_ablation_study.png
+│   │   │   ├── guideline_compliance_boxplot.png
+│   │   │   ├── learning_curves_2.png
+│   │   │   └── tsne_visualization.png
+│   │   ├── ablation_topk.csv           # Table 3.3 raw data
+│   │   ├── main_evaluation_summary.csv # Table 3.4 raw data
+│   │   ├── pareto_tradeoff_results.csv # Figure 1 raw data
+│   │   ├── plot_training_results.py    # Script to programmatically regenerate figures
+│   │   ├── system2_ablation_results.csv # Figure 2 raw data
+│   │   ├── test_eval_200_episodes.csv  # Boxplot raw data
+│   │   ├── training_dynamics.csv       # Learning curves raw data
+│   │   ├── tsne_embeddings_2d.csv      # t-SNE coordinates
+│   │   └── wrl_nearest_neighbors.json  # Table 3.2 raw data
 │   │
-│   ├── results/                # Empirical result logs and visualizations
-│   │   ├── figures/                 # Generated high-resolution plots used in the paper
-│   │   ├── training_dynamics.csv    # Per-timestep logs of RL convergence
-│   │   ├── test_eval_200_episodes.csv # Raw success rate data across 200 test cases
-│   │   ├── pareto_tradeoff_results.csv # Results of the Efficiency vs. Safety sweep
-│   │   ├── system2_ablation_results.csv # Metrics for the 3-agent pipeline comparison
-│   │   └── tsne_embeddings_2d.csv   # 2D coordinates for embedding space visualization
+│   ├── models/                         # Trained model artifacts and weights
+│   │   ├── stage1_wrl_encoders/        # Fine-tuned State and Action encoders
+│   │   └── stage2_gro_policies/        # SB3 (.zip) and RSL-RL/PyG (.pt) checkpoints
 │   │
-│   ├── models/                 # Checkpoints and frozen model weights
-│   │   ├── stage1_wrl_encoders/     # SentenceTransformer configurations
-│   │   └── stage2_gro_policies/     # SB3 (.zip) and RSL-RL/PyG (.pt) checkpoints
-│   │
-│   └── rsl_rl/                 # Customized RSL-RL framework supporting TensorDict
+│   └── rsl_rl/                         # Customized RSL-RL framework supporting TensorDict
 │
-└── web/                        # Next.js Frontend for Progressive Disclosure Demo
-	└── backend/                # FastAPI TraceStore service and database models
+├── web/                                # Next.js Progressive Disclosure Frontend
+│   ├── app/
+│   ├── backend/                        # FastAPI TraceStore service
+│   │   ├── api.py                      # REST endpoints for trace queries
+│   │   ├── models.py                   # SQLAlchemy database schemas
+│   │   ├── requirements.txt
+│   │   ├── seed_tracestore.py          # Script to populate the PostgreSQL database
+│   │   └── store.py                    # VHASTraceStore database driver
+│   ├── components/                     # UI components (vhas)
+│   ├── data/                           # OTLP demo traces
+│   ├── lib/
+│   └── public/
+│
+└── docker-compose-vhas-db.yml          # Docker Compose configuration for PostgreSQL
 ```
 
-## 3. Experimental Setup and Bounded Scope
+---
 
-To systematically evaluate the algorithm, the VHAS testbed is strictly bounded to internal medicine triage workflows.
-- **Action Space:** 5 specialized agents (`TriageAgent`, `EHRAgent`, `DispensationAgent`, `ReconciliationAgent`, `SummaryAgent`) and 6 functional tools.
-- **State Space Abstraction:** 35 Semantic State Prototypes, designed via a $7 \times 5$ task decomposition matrix to ensure RL tractability while representing core clinical handoffs.
+## 3. Experimental Setup
+
+The evaluation is strictly bounded to emergency internal medicine triage across three typical clinical pathways: **Monitor & Release**, **Quick Intervention**, and **Complex Care Loop**.
+- **Action Space:** 5 specialized agents, 6 tools.
+- **State Space Abstraction:** 35 Semantic State Prototypes, designed via a $7 \times 5$ task decomposition matrix to ensure RL tractability.
 - **Ground-Truth Guidelines:** 3 deterministic workflow skeletons derived from established process mining logs (MIMIC-EL) and clinical protocols (ESI v4).
 
-The evaluation dataset consists of 2,000 semi-synthetic traces acting as "semantic noise" to stress-test the algorithm's capability to adhere to the 3 ground-truth skeletons.
+---
 
 ## 4. Evaluation Metrics
 
-System performance is quantified using metrics designed to evaluate orchestration reliability:
-1. **Guideline Compliance Rate (GCR \%):** The frequency at which the agent perfectly adheres to the prescribed workflow skeleton without deviation.
-2. **Protocol Redundancy Rate (PRR \%):** The frequency of unnecessary or looping actions executed by the agent.
-3. **Average Orchestration Steps:** Evaluates the efficiency of the policy in finding the shortest valid path compared to a static, rule-based baseline.
+We quantify the orchestrator's performance using three strict, compliance-oriented metrics:
+1.  **Guideline Compliance Rate (GCR \%):** Frequency of perfect adherence to the ground-truth workflow skeletons.
+2.  **Protocol Redundancy Rate (PRR \%):** Frequency of unnecessary or repetitive agent actions.
+3.  **Average Orchestration Steps:** Measured decision efficiency in finding the optimal path compared to a 6.0-step static baseline.
 
-## 5. Getting Started & Reproducibility
+---
+
+## 5. Usage \& Reproduction
 
 ### Prerequisites
 - Python 3.10+
 - PyTorch 2.0+ (with CUDA support for PyTorch Geometric)
-- OpenAI API Key (for System 2 evaluation)
+- PostgreSQL (or Docker)
+- OpenAI API Key (configured in `.env.local` for System 2 evaluation)
 
 ### Installation
 ```bash
-git clone <repository_url>
-cd THESIS_RGRL
+git clone https://github.com/quyk67uet/rgrl.git
+cd rgrl
 pip install -r web/backend/requirements.txt
 ```
 
-### Prepare Train/Val/Test Splits
-The thesis dataset split is deterministic with seed 42:
-- Train: 1,600
-- Validation: 200
-- Test: 200
-
+### Prepare Dataset Splits
+To partition the 2,000 synthetic traces into the standard 80/10/10 split (1,600 Train / 200 Val / 200 Test) with seed 42, execute:
 ```bash
 python ai/data/workflow_traces/prepare_splits.py
 ```
