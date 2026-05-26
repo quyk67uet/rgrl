@@ -9,10 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-// Helper function to dynamically class merge safely
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
-// Resolve API URL dynamically from environment variables
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
 
 interface WorkflowStep {
@@ -23,7 +21,6 @@ interface WorkflowStep {
   ui_data?: Record<string, any>;
 }
 
-// Balanced brace parser to extract completed step objects from streaming JSON
 const extractCompletedSteps = (text: string): { steps: WorkflowStep[], parsedLength: number } => {
   const stepsStart = text.indexOf('"steps"');
   if (stepsStart === -1) return { steps: [], parsedLength: 0 };
@@ -41,7 +38,6 @@ const extractCompletedSteps = (text: string): { steps: WorkflowStep[], parsedLen
     let braceCount = 1;
     let index = nextBrace + 1;
     
-    // Scan for balanced curly braces matching the step boundaries
     while (braceCount > 0 && index < text.length) {
       const char = text[index];
       if (char === '{') braceCount++;
@@ -54,12 +50,12 @@ const extractCompletedSteps = (text: string): { steps: WorkflowStep[], parsedLen
       try {
         const stepObj = JSON.parse(stepStr);
         parsedSteps.push(stepObj);
-        searchIndex = index; // Advance past the successfully parsed step
+        searchIndex = index; 
       } catch {
-        break; // Incomplete JSON inside the object, stop and wait
+        break; 
       }
     } else {
-      break; // Unbalanced braces, wait for more chunks
+      break; 
     }
   }
   
@@ -74,14 +70,12 @@ export function ClinicalAssistant() {
   const [isHitlTriggered, setIsHitlTriggered] = useState(false);
   const [hitlReason, setHitlReason] = useState("");
   
-  // Real-time progressive states
   const [selectedPathway, setSelectedPathway] = useState<number | null>(null);
   const [confidenceScore, setConfidenceScore] = useState<number | null>(null);
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   
   const consoleEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll for the System 2 Reasoning Console
   useEffect(() => {
     consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [internalThoughts]);
@@ -301,7 +295,6 @@ export function ClinicalAssistant() {
         </Badge>
       </div>
 
-      {/* INTAKE FORM */}
       {steps.length === 0 && !isLoading && (
         <Card className="border-slate-200 shadow-sm animate-fade-in">
           <CardHeader>
@@ -373,7 +366,6 @@ export function ClinicalAssistant() {
         </Card>
       )}
 
-      {/* SYSTEM 2 REASONING CONSOLE */}
       {internalThoughts.length > 0 && (
         <Card className="border-slate-800 bg-slate-950 p-4 font-mono text-xs text-slate-200 shadow-xl animate-fade-in">
           <CardHeader className="p-0 pb-2 border-b border-slate-800 flex flex-row items-center justify-between">
@@ -400,7 +392,6 @@ export function ClinicalAssistant() {
         </Card>
       )}
 
-      {/* HUMAN-IN-THE-LOOP INTERVENTION MODAL */}
       {isHitlTriggered && (
         <Card className="border-amber-200 bg-amber-50/70 animate-fade-in">
           <CardHeader>
@@ -426,7 +417,6 @@ export function ClinicalAssistant() {
         </Card>
       )}
 
-      {/* GENERATED TIMELINE CARDS */}
       {selectedPathway && (
         <div className="space-y-4 animate-fade-in">
           <div className="flex justify-between items-center bg-slate-50 px-4 py-3 rounded-lg border border-slate-100">
@@ -439,7 +429,6 @@ export function ClinicalAssistant() {
           <div className="relative pl-8 space-y-6">
             <div className="absolute left-3 top-2 h-[calc(100%-24px)] w-px bg-slate-200" />
             
-            {/* Render completed steps progressively */}
             <AnimatePresence>
               {steps.map((step, idx) => (
                 <motion.div 
@@ -474,7 +463,6 @@ export function ClinicalAssistant() {
               ))}
             </AnimatePresence>
 
-            {/* SKELETON LOADER (Hiện khi đang stream dở dang) */}
             {isLoading && (
               <div className="relative animate-pulse">
                 <div className="absolute -left-8 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 border border-slate-200 text-slate-400">
