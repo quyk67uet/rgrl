@@ -1,11 +1,11 @@
 "use client";
 
-import { Stethoscope, FileSearch, Gauge } from "lucide-react";
+import { Stethoscope, FileSearch } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/components/vhas/i18n";
 
-export type TabKey = "assistant" | "trace" | "dashboard";
+export type TabKey = "assistant" | "trace";
 
 const navItems = {
   en: [
@@ -21,12 +21,6 @@ const navItems = {
       description: "Explainability audit",
       icon: FileSearch,
     },
-    {
-      key: "dashboard" as const,
-      label: "System Dashboard",
-      description: "Operational metrics",
-      icon: Gauge,
-    },
   ],
   vi: [
     {
@@ -40,12 +34,6 @@ const navItems = {
       label: "Truy vết Quyết định",
       description: "Kiểm toán giải thích",
       icon: FileSearch,
-    },
-    {
-      key: "dashboard" as const,
-      label: "Bảng Hệ thống",
-      description: "Số liệu vận hành",
-      icon: Gauge,
     },
   ],
 };
@@ -141,11 +129,6 @@ export function Sidebar({
             );
           })}
         </nav>
-      </div>
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">
-        {locale === "vi"
-          ? "Thiết kế sẵn sàng phục vụ giúp thông tin lâm sàng rõ ràng, ngắn gọn, dễ hành động."
-          : "Ready-to-serve design keeps clinical context clear, concise, and actionable."}
       </div>
     </aside>
   );
