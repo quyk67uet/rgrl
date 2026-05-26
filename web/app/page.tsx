@@ -6,8 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Sidebar, type TabKey } from "@/components/vhas/Sidebar";
 import { ClinicalAssistant } from "@/components/vhas/ClinicalAssistant";
 import { TraceExplorer } from "@/components/vhas/TraceExplorer";
-import { SystemDashboard } from "@/components/vhas/SystemDashboard";
-import { I18nProvider, LanguageToggle, useI18n } from "@/components/vhas/i18n";
+import { I18nProvider, useI18n } from "@/components/vhas/i18n";
 function HomeContent() {
 	const [activeTab, setActiveTab] = useState<TabKey>("assistant");
 	const { locale } = useI18n();
@@ -47,7 +46,6 @@ function HomeContent() {
 							<Badge variant="warning">
 								{locale === "vi" ? "Sẵn sàng kiểm toán" : "Audit Ready"}
 							</Badge>
-							<LanguageToggle />
 						</div>
 					</header>
 
@@ -62,7 +60,6 @@ function HomeContent() {
 
 						{activeTab === "assistant" && <ClinicalAssistant />}
 						{activeTab === "trace" && <TraceExplorer />}
-						{activeTab === "dashboard" && <SystemDashboard />}
 					</div>
 				</main>
 			</div>
